@@ -25,6 +25,10 @@ microsp_data <- microsp_data %>%
   rowwise() %>%
   filter(!any(str_detect(References, excluded_papers)))
 
+write_csv(select(microsp_data, `Species Name`, year_first_described, first_paper) %>%
+            arrange(year_first_described),
+          '../../data/manually_add_PMIDs.csv')
+
 ################################################################################
 
 ### Helper functions
