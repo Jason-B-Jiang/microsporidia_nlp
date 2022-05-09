@@ -18,6 +18,32 @@ library(writexl)
 
 ################################################################################
 
+### Helper functions
+
+get_year_first_identified <- Vectorize(function(years) {
+  # ----------------------------------------------------------------------------
+  # Get the first year a Microsporidia species was described in, as an integer
+  #
+  # Input:
+  #   years: entry from the 'Date Identified (year)' column from microsporidia
+  #          species dataset
+  # ----------------------------------------------------------------------------
+  return(as.integer(str_remove(str_split(years, '; ')[[1]][1], ' \\(.+')))
+})
+
+
+get_first_reference <- Vectorize(function(ref) {
+  # ----------------------------------------------------------------------------
+  # Get reference for the first paper describing a particular Microsporidia species
+  #
+  # Input:
+  #   ref: entry from References column of Microsporidia dataset
+  # ----------------------------------------------------------------------------
+  return(str_remove(trimws(str_split(ref, '\n')[[1]][1]), '^\\d\\. '))
+})
+
+################################################################################
+
 # Supplemental table S1 from Murareanu et al. 2021 (Microsporidia species dataset)
 microsp_data <- read_csv('../../data/microsporidia_species.csv')
 
@@ -48,30 +74,4 @@ microsp_data <- microsp_data %>%
 
 # Save microsp_dataframe as xlsx and manually collect paper abstracts
 # (I'll explain why during lab meeting)
-write_xlsx(microsp_data, '../../data/manually_collect_abstracts_2.xlsx')
-
-################################################################################
-
-### Helper functions
-
-get_year_first_identified <- Vectorize(function(years) {
-  # ----------------------------------------------------------------------------
-  # Get the first year a Microsporidia species was described in, as an integer
-  #
-  # Input:
-  #   years: entry from the 'Date Identified (year)' column from microsporidia
-  #          species dataset
-  # ----------------------------------------------------------------------------
-  return(as.integer(str_remove(str_split(years, '; ')[[1]][1], ' \\(.+')))
-})
-
-
-get_first_reference <- Vectorize(function(ref) {
-  # ----------------------------------------------------------------------------
-  # Get reference for the first paper describing a particular Microsporidia species
-  #
-  # Input:
-  #   ref: entry from References column of Microsporidia dataset
-  # ----------------------------------------------------------------------------
-  return(str_remove(trimws(str_split(ref, '\n')[[1]][1]), '^\\d\\. '))
-})
+write_xlsx(microsp_data, '../../data/manually_collect_abstracts.xlsx')
