@@ -15,13 +15,42 @@
 
 from taxonerd import TaxoNERD
 import pandas as pd
+from pathlib import Path 
 
 ################################################################################
 
 ## Load in abstract + host data for microsporidia species
 abstracts = pd.read_csv('../../data/abstracts_hosts_matched.csv')
 
+## Replace missing values (NaNs) in first_paper_title and abstract columns of
+## abstracts with empty strings (to prevent error with Taxonerd)
+abstracts[['first_paper_title', 'abstract']] = abstracts[['first_paper_title', 'abstract']].fillna('')
+
 ## Create Taxonerd object for extracting species names from text
 taxonerd = TaxoNERD(model="en_ner_eco_biobert",  # use more accurate model
                     prefer_gpu=False,
                     with_abbrev=False)
+
+def predict_species(taxonerd, txt) -> str:
+    '''Docstring goes here
+    '''
+    taxonerd_pred = taxonerd.find_in_text(txt)
+    if not taxonerd_pred.empty:
+        return ', '.join(taxonerd_pred['text'])
+
+    return ''
+
+## Add column in abstracts for taxonerd predicted species from paper titles and
+## abstracts
+abstracts = abstracts.assign(  # yeah this code is a mess rn
+    title_species = lambda df: df['first_paper_title'].map(
+        lambda title: predict_species(taxonerd, title)
+    ),
+    abstract_species = lambda df: df['abstract'].map(
+        lambda abstract: predict_species(taxonerd, abstract)
+    )
+)
+
+## Test file output
+filepath = Path('../../data/taxonerd_test.csv')
+abstracts.to_csv(filepath)
