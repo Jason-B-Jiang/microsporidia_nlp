@@ -1,33 +1,54 @@
-# ------------------------------------------------------------------------------
-# Format citations in Microsporidia species dataset for collecting abstracts
-# ------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+#
+# Organize microsporidia species papers
+#
+# Jason Jiang - Created: 2022/05/02
+#               Last edited: 2022/05/09
+#
+# Mideo Lab - Microsporidia text mining
+#
+# Select microsporidia species for analysis and extract first papers describing
+# each species.
+#
+#
+# -----------------------------------------------------------------------------
 
 library(tidyverse)
-library(rentrez)
+library(writexl)
 
 ################################################################################
 
+# Supplemental table S1 from Murareanu et al. 2021 (Microsporidia species dataset)
 microsp_data <- read_csv('../../data/microsporidia_species.csv')
 
 # Exclude any species coming from these papers
-# Write reason why later
+# I'll talk more about this during lab meeting
 excluded_papers <- readLines('../../data/excluded_papers.txt')
 
-# Filter microsporidia species to species from 1977 to 2021
-# Species from before 1977 come from Sprague book
-# We can manually filter out 'Sprague' species from our 1977 collection
 microsp_data <- microsp_data %>%
+  rename(species = `Species Name`) %>%
   mutate(year_first_described = get_year_first_identified(`Date Identified (year)`),
-         first_paper = get_first_reference(References)) %>%
+         first_paper_reference = get_first_reference(References),
+         first_paper_title = NA,
+         abstract = NA,
+         notes = NA,
+         # Is the paper in a foreign language?
+         foreign = NA) %>%
   # filter out cases where year first described is unknown or ambiguous
   # (NA or '?' in the microsporidia dataset for Date Identified)
-  filter(!is.na(year_first_described), year_first_described >= 1977) %>%
+  filter(!is.na(year_first_described),
+         # Filter microsporidia species to species from 1977 to 2021
+         # Species from before 1977 come from Sprague book
+         year_first_described >= 1977) %>%
   rowwise() %>%
-  filter(!any(str_detect(References, excluded_papers)))
+  filter(!any(str_detect(References, excluded_papers))) %>%
+  select(species, year_first_described, first_paper_reference,
+         first_paper_title, abstract, notes, foreign) %>%
+  arrange(year_first_described)
 
-write_csv(select(microsp_data, `Species Name`, year_first_described, first_paper) %>%
-            arrange(year_first_described),
-          '../../data/manually_add_PMIDs.csv')
+# Save microsp_dataframe as xlsx and manually collect paper abstracts
+# (I'll explain why during lab meeting)
+write_xlsx(microsp_data, '../../data/manually_collect_abstracts_2.xlsx')
 
 ################################################################################
 
