@@ -19,8 +19,8 @@ from pathlib import Path
 
 ################################################################################
 
-## Load in abstract + host data for microsporidia species
-abstracts = pd.read_csv('../../data/abstracts_hosts_matched.csv')
+## Load in abstract + traits for microsporidia species
+abstracts = pd.read_csv('../../data/abstracts_traits.csv')
 
 ## Replace missing values (NaNs) in first_paper_title and abstract columns of
 ## abstracts with empty strings (to prevent error with Taxonerd)
@@ -52,5 +52,5 @@ abstracts = abstracts.assign(  # yeah this code is a mess rn
 )
 
 ## Test file output
-filepath = Path('../../data/taxonerd_test.csv')
+filepath = Path('../../results/taxonerd_test.csv')
 abstracts.to_csv(filepath)

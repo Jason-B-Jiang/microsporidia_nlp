@@ -23,15 +23,13 @@ abstracts <- read_xlsx('../../data/manually_collect_abstracts.xlsx') %>%
   # fix weird issue with true/false being turned into dates by xlsx format
   mutate(foreign = ifelse(!is.na(foreign), TRUE, FALSE))
 
-microsp_data <- read_csv('../../data/microsporidia_species.csv')
+microsp_data <- read_csv('../../data/microsporidia_species.csv') %>%
+  rename(species = `Species Name`, hosts = `Natural Host(s)`)
 
-# Create new dataframe just for microsporidia host data
-host_data <- microsp_data %>%
-  rename(species = `Species Name`, hosts = `Natural Host(s)`) %>%
-  select(species, hosts)
+# add microsporidia species trait data to abstracts dataframe
+abstracts <- merge(x = abstracts, y = microsp_data,
+                   by = 'species', all = TRUE) %>%
+  filter(!is.na(first_paper_reference))
 
-# add host data to abstracts dataframe
-abstracts <- merge(x = abstracts, y = host_data, by = 'species', all.x = TRUE)
-
-# write the abstracts dataframe, now with host information, to the data folder
-write_csv(abstracts, '../../data/abstracts_hosts_matched.csv')
+# write the abstracts dataframe, now with traits information, to the data folder
+write_csv(abstracts, '../../data/abstracts_traits.csv')
