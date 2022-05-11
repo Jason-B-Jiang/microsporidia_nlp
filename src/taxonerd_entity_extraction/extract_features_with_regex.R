@@ -3,7 +3,7 @@
 # Text
 #
 # Jason Jiang - Created: 2022/05/10
-#               Last edited: 2022/05/10
+#               Last edited: 2022/05/11
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -17,7 +17,9 @@ library(glue)  # For formatting strings like in Python
 
 ################################################################################
 
-## Global variables for regex patterns to extract spore length/width data
+## Extract dimensions
+
+# Regex patterns to extract spore length/width data
 NUMBER <- '\\d\\.?\\d*'  # ex: 4, 5.0, 4.05, etc
 
 DIMENSION  <-  # ex: 4.0 (3.0 - 5.0) um or 4 - 5 (4.5)
@@ -25,10 +27,6 @@ DIMENSION  <-  # ex: 4.0 (3.0 - 5.0) um or 4 - 5 (4.5)
 
 LENGTH_WIDTH <-  # ex: 4.0 (3.0 - 5.0) um x 4 - 5 (4.5) um
   glue('{dimension}\\s*\\W*\\s*{dimension}\\s*\\W?\\w*')
-
-################################################################################
-
-## Extract dimensions
 
 extract_spore_dimensions <- Vectorize(function(abstract) {
   # ---------------------------------------------------------------------------
@@ -49,14 +47,19 @@ microsp_data <- read_csv('../../data/abstracts_traits.csv') %>%
 
 ## Extract polar tube coils
 
-## Try extracting numeric data immediately before or after detecting polar tube
-## coil term?
+# Regex patterns
+NUM_RANGE <- '\\d *(to|-)? *\\d?'
+COILS <- '(coil[s]?|turn[s]?)'
 
 detect_coils <- Vectorize(function(abstract) {
   # coil or turn appears as individual words in the abstract, suggesting polar
   # tube coil/turn data
-  return(str_detect(abstract, ' *coil[s]? *') | str_detect(abstract, ' *turn[s]? *'))
+  return(str_detect(abstract, '( *coil[s]? *| *turn[s]? *)'))
 })
+
+extract_coil_data <- function(abstract) {
+  str_extract()
+}
 
 microsp_data <- read_csv('../../data/abstracts_traits.csv') %>%
   select(species, year_first_described, first_paper_title, abstract,
@@ -68,3 +71,18 @@ false_neg <-
 
 false_pos <-
   filter(microsp_data, is.na(`Polar Tubule Coils Range`) & is.na(`Polar Tubule Coils Average`), has_coil_data)
+
+################################################################################
+
+## Polar tube data extraction
+
+# (tube) (measurement) OR (measurement) (tube), extract tube data in each case
+microsp_data <- read_csv('../../data/abstracts_traits.csv')
+
+detect_polar_tube <- Vectorize(function(abstract) {
+  # Mention of 'tube', 'tubule' or 'filament' in the text
+  str_detect(abstract, '((\\s*tube\\s*|\\s*tubule\\s*)|\\s*filament\\s*)')
+})
+
+microsp_data <- microsp_data %>%
+  mutate(has_tube_data = detect_polar_tube(abstract))
