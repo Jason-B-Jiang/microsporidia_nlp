@@ -54,8 +54,8 @@ excluded_papers <- readLines('../../data/excluded_papers.txt')
 microsp_data <- microsp_data %>%
   rename(species = `Species Name`) %>%
   mutate(year_first_described = get_year_first_identified(`Date Identified (year)`),
-         first_paper_reference = get_first_reference(References),
-         first_paper_title = NA,
+         paper_ref = get_first_reference(References),
+         paper_title = NA,
          abstract = NA,
          notes = NA,
          # Is the paper in a foreign language?
