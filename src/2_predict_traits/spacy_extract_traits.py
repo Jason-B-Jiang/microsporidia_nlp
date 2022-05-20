@@ -3,10 +3,11 @@
 # Extract Microsporidia traits from paper titles/abstracts with spaCy
 #
 # Jason Jiang - Created: 2022/05/13
-#               Last edited: 2022/05/17
+#               Last edited: 2022/05/20
 #
 # Mideo Lab - Microsporidia text mining
 #
+# PLEASE IGNORE THIS SCRIPT, I'VE MOVED ALL WORK HERE TO OTHER SCRIPTS
 #
 # -----------------------------------------------------------------------------
 
