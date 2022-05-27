@@ -123,89 +123,31 @@ pt_coil_preds <- read_csv('../../results/microsp_pt_predictions.csv') %>%
 ################################################################################
 
 ## Evaluate locality predictions
-## ~36% precision and recall, if going by exact matches for countries only
 
-format_locality <- Vectorize(function(locality) {
-  str_c(str_remove(str_split(locality, '; ')[[1]], ' ?\\(.+\\) ?'),
-        collapse = '; ')
-})
+# TP: number of regions + subregions that are actually in recorded data
+# FP: number of regions + subregions not in recorded data
+# FN: number of regions + subregions in recorded data but not in predictions
 
-
-get_true_pos_locality <- Vectorize(function(locality, pred_locality) {
+get_false_pos_locality <- function(locality, pred_locality) {
   locality <- str_split(locality, '; ')[[1]]
   pred_locality <- str_split(pred_locality, '; ')[[1]]
+  false_pos <- c()
   
-  true_pos <- pred_locality[which(pred_locality %in% locality)]
-  if (length(true_pos) == 0) {
-    return(NA)
-  } else {
-    return(str_c(true_pos, collapse = '; ')[[1]])
+  for (pred in pred_locality) {
+    pred_region <- str_remove(pred, ' \\(.*\\)')
+    pred_subregions <-
+      str_split(str_extract(pred, '(?<=\\().*(?=\\))'), ' \\| ')[[1]]
+    
+    # continue writing this later
   }
-}, vectorize.args = c('locality', 'pred_locality'))
+}
 
-
-get_false_pos_locality <- Vectorize(function(locality, pred_locality) {
-  locality <- str_split(locality, '; ')[[1]]
-  pred_locality <- str_split(pred_locality, '; ')[[1]]
-  
-  false_pos <- pred_locality[which(!(pred_locality %in% locality))]
-  if (length(false_pos) == 0) {
-    return(NA)
-  } else {
-    return(str_c(false_pos, collapse = '; ')[[1]])
-  }
-}, vectorize.args = c('locality', 'pred_locality'))
-
-
-get_false_neg_locality <- Vectorize(function(locality, pred_locality) {
-  locality <- str_split(locality, '; ')[[1]]
-  pred_locality <- str_split(pred_locality, '; ')[[1]]
-  
-  false_neg <- locality[which(!locality %in% pred_locality)]
-  if (length(false_neg) == 0) {
-    return(NA)
-  } else {
-    return(str_c(false_neg, collapse = '; ')[[1]])
-  }
-}, vectorize.args = c('locality', 'pred_locality'))
-
-
-get_precision <- Vectorize(function(true_pos, false_pos) {
-  pos <- sapply(c(true_pos, false_pos),
-                function(x) {ifelse(is.na(x), 0, length(str_split(x, '; ')[[1]]))})
-  
-  if (identical(pos, c(0, 0))) {
-    return(0)
-  } else {
-    # precision = TP / (TP + FP)
-    return(as.numeric(pos[1] / (pos[1] + pos[2]))) 
-  }
-}, vectorize.args = c('true_pos', 'false_pos'))
-
-
-get_recall <- Vectorize(function(true_pos, false_neg) {
-  pos <- sapply(c(true_pos, false_neg),
-                function(x) {ifelse(is.na(x), 0, length(str_split(x, '; ')[[1]]))})
-  
-  if (identical(pos, c(0, 0))) {
-    return(0)
-  } else {
-    # precision = TP / (TP + FN)
-    return(as.numeric(pos[1] / (pos[1] + pos[2]))) 
-  }
-}, vectorize.args = c('true_pos', 'false_neg'))
-
-
-locality_preds <- read_csv('../../results/microsp_locality_predictions.csv') %>%
-  filter(!is.na(locality)) %>%
-  mutate(locality_formatted = format_locality(locality),
-         true_pos = get_true_pos_locality(locality_formatted, pred_locality),
-         false_pos = get_false_pos_locality(locality_formatted, pred_locality),
-         false_neg = get_false_neg_locality(locality_formatted, pred_locality),
-         precision = get_precision(true_pos, false_pos),
-         # NaNs being returned instead of 0 for some reason, temporary fix
-         precision = ifelse(is.nan(precision), 0, precision),
-         recall = get_recall(true_pos, false_neg))
+microsp_locality_preds <- read_csv('../../results/microsp_locality_predictions.csv') %>%
+  mutate(false_pos = get_false_pos_locality(locality, pred_locality),
+         true_pos = get_true_pos_locality(locality, pred_locality),
+         false_neg = get_false_neg_locality(locality, pred_locality),
+         precision = get_locality_precision(true_pos, false_pos),
+         recall = get_locality_recall(true_pos, false_neg))
 
 ################################################################################
 

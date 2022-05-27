@@ -3,7 +3,7 @@
 # Predict microsporidia species names + hosts from paper titles + abstracts
 #
 # Jason Jiang - Created: 2022/05/19
-#               Last edited: 2022/05/19
+#               Last edited: 2022/05/27
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -16,6 +16,8 @@ import re
 import pandas as pd
 import taxonerd
 from taxonerd import TaxoNERD
+import spacy
+from spacy.matcher import PhraseMatcher
 from pathlib import Path
 
 ################################################################################
@@ -128,9 +130,40 @@ microsp_data['pred_hosts'] = \
 
 ################################################################################
 
+## New approach for extracting microsporidia names: use microsporidia genuses
+## from NCBI to find microsporidia species amongst Taxonerd predictions
+
+microsp_genuses = pd.read_csv('../../data/microsp_genuses/microsporidia_genuses.tsv',
+                              sep='\t')['name'].tolist()
+
+nlp = spacy.load('en_core_web_md')
+
+genus_matcher = PhraseMatcher(nlp.vocab)
+genus_matcher.add('microsp_genus', [nlp(genus) for genus in microsp_genuses])
+
+def get_microsp_species(taxonerd_species: str) -> str:
+    """Docstring goes here.
+    """
+    taxonerd_species = [nlp(sp) for sp in taxonerd_species.split('; ')]
+    microsp_sp = []
+
+    for sp in taxonerd_species:
+        if genus_matcher(sp):
+            microsp_sp.append(sp.text)
+
+    return '; '.join(microsp_sp)
+
+microsp_data = microsp_data.assign(
+    pred_species_2 = lambda df: df['pred_hosts'].map(
+        lambda species: get_microsp_species(species)
+    )
+)
+
+################################################################################
+
 ## Write resulting dataframe of predictions to results folder
 
-microsp_data[['title_abstract', 'species', 'pred_species',
+microsp_data[['title_abstract', 'species', 'pred_species', 'pred_species_2',
               'hosts_natural', 'hosts_experimental', 'pred_hosts']].to_csv(
     Path('../../results/microsp_and_host_predictions.csv')
     )

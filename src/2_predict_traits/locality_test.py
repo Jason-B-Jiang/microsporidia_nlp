@@ -1,10 +1,11 @@
 from flashgeotext.geotext import GeoText
 import spacy
 import geocoder
-import json
+import pickle
 from os.path import exists
-
 from typing import Dict, List
+import pandas as pd
+from pathlib import Path
 
 ################################################################################
 
@@ -17,10 +18,10 @@ nlp = spacy.load('en_core_web_md')
 ## Global variables
 SPACY_LOCALITIES = ['FAC', 'GPE', 'LOC']  # spacy entities corresponding to localities
 
-if exists('geonames_cache.json'):
+if exists('geonames_cache.pickle'):
     # load in cached geonames search results
-    with open('geonames_cache.json', 'r') as f:
-        GEONAMES_CACHE = json.load(f)
+    with open('geonames_cache.pickle', 'r') as f:
+        GEONAMES_CACHE = pickle.load(f)
 else:
     GEONAMES_CACHE = {}
 
@@ -52,7 +53,7 @@ def get_flashgeotext_preds(txt: str) -> Dict[str, dict]:
     geo_preds['subregions'] = geo_preds.pop('cities')
 
     # assign subregions to each region later
-    # also remove 'span_info' and count key for each region, as we won't use it
+    # also remove 'span_info' and 'count' key for each region, as we won't use it
     for region in geo_preds['regions']:
         geo_preds['regions'][region]['subregions'] = []
         geo_preds['regions'][region].pop('span_info')
@@ -159,6 +160,18 @@ def assign_to_region_or_subregion(locations: List[str], geo_preds) -> None:
             else:
                 geo_preds['regions'][loc_country]['subregions'].append(loc)
 
+
+def format_localitity_string(locality_preds: Dict[str, List[str]]) -> str:
+    """Format dictionary of region predictions + their subregions as a string,
+    in the form of 'Region 1 (subregion A | subregion B); Region 2 (...); ...'
+    """
+    loc_strs = []
+    for region in locality_preds:
+        loc_strs.append(
+            region + ' (' + ' | '.join(locality_preds[region]['subregions']) + ')'
+        )
+
+    return '; '.join(loc_strs)
         
 
 def predict_localities(txt: str) ->  Dict[str, dict]:
@@ -187,70 +200,38 @@ def predict_localities(txt: str) ->  Dict[str, dict]:
     # its corresponding regions as appropriate
     assign_to_region_or_subregion(list(geo_preds['subregions'].keys()), geo_preds)
 
-    return geo_preds['regions']
+    return format_localitity_string(geo_preds['regions'])
 
 ################################################################################
+
+## Make locality predictions for each microsporidia species paper
+
+# Load in formatted dataframe of microsporidia species data, from
+# src/1_format_data/3_misc_cleanup.R
+microsp_data = pd.read_csv('../../data/manually_format_multi_species_papers.csv')
+
+# Exclude species with >1 papers describing them (for now)
+microsp_data = microsp_data[microsp_data['num_papers'] < 2]
+
+# Make locality predictions using title_abstract column
+microsp_data = microsp_data.assign(
+    # pred = predicted
+    pred_locality = lambda df: df['title_abstract'].map(
+        lambda txt: predict_localities(txt)
+    )
+)
+
+################################################################################
+
+## Write outputs
+
+# Write predictions to results folder
+microsp_data[['species', 'title_abstract', 'locality', 'pred_locality']].to_csv(
+    Path('../../results/microsp_locality_predictions.csv')
+    )
 
 # Save cached geonames search results
-with open('geonames_cache.json', 'w') as f:
-    json.dump(GEONAMES_CACHE, f)
-
-################################################################################
-
-# Commented out code I'm keeping just in case
-    # Look up spacy predictions in geonames to determine if it's a region
-    # or subregion
-    # for pred in spacy_preds:
-    #     # remove leading determinant (ex: 'the') from spacy entity name
-    #     pred_name = remove_leading_determinant(pred)
-
-    #     if not pred_name in GEONAMES_CACHE:
-    #         geonames_result = geocoder.geonames(pred_name, key = USERNAME)
-
-    #         # store geonames search result for spacy prediction in cache, for
-    #         # future access
-    #         GEONAMES_CACHE[pred_name] = geonames_result
-    #     else:
-    #         # fetch cached geonames search results for spacy prediction
-    #         geonames_result = GEONAMES_CACHE[pred_name]
-
-    #     # spacy entity not assigned country, so treat as own region
-    #     if not geonames_result.country:
-    #         geo_preds['regions'][pred_name] = \
-    #             {'count': 1, 'span_info': [(pred[0].i, pred[-1].i)],
-    #             'found_as': [pred.text, pred_name], 'subregions': []}
-    #     else:
-    #         # assign spacy entity to a country
-    #         if geonames_result.country not in geo_preds['regions']:
-    #             geo_preds['regions'][geonames_result.country] = \
-    #                 {'count': 1, 'span_info': [(pred[0].i, pred[-1].i)],
-    #                 'found_as': [geonames_result.country], 'subregions': [pred_name]}
-    #         else:
-    #             geo_preds['regions'][geonames_result.country]['subregions'].append(
-    #                 pred_name
-    #                 )
-
-    # # Assign subregions in geo_preds to their respective regions
-    # for subregion in geo_preds['subregions']:
-    #     if subregion not in GEONAMES_CACHE:
-    #         geonames_result = geocoder.geonames(subregion, key = USERNAME)
-    #         GEONAMES_CACHE[subregion] = geonames_result
-    #     else:
-    #         geonames_result = GEONAMES_CACHE[subregion]
-
-    #     # in case some non-city independent location was flagged as city by
-    #     # geotext
-    #     if not geonames_result.country:
-    #         geo_preds['regions'][subregion] = \
-    #             {'count': 1, 'span_info': geo_preds['subregions'][subregion]['span_info'],
-    #             'found_as': [subregion], 'subregions': []}
-    #     else:
-    #         # add location to respective country/region
-    #         if geonames_result.country not in geo_preds['regions']:
-    #             geo_preds['regions'][geonames_result.country] = \
-    #                 {'count': 1, 'span_info': [(None, None)],
-    #                 'found_as': geonames_result.country, 'subregions': [subregion]}
-    #         else:
-    #             geo_preds['regions'][geonames_result.country]['subregions'].append(
-    #                 subregion
-    #             )
+# pickling isn't working for me, so I'm commenting out the code
+# with open('geonames_cache.pickle', 'w') as f:
+#     if GEONAMES_CACHE != {}:  # don't bother writing an empty cache
+#         pickle.dump(GEONAMES_CACHE, f)
