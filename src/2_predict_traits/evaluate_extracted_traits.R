@@ -3,7 +3,7 @@
 # Evaluate accuracy of predicted microsporidia traits
 #
 # Jason Jiang - Created: 2022/05/17
-#               Last edited: 2022/05/23
+#               Last edited: 2022/05/30
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -124,9 +124,22 @@ pt_coil_preds <- read_csv('../../results/microsp_pt_predictions.csv') %>%
 
 ## Evaluate locality predictions
 
+# In general, we want to see if predictions are a substring of the recorded
+# data
+# This is because we expect recorded regions to be a little more descriptive,
+# while predicted regions should be more concise as we are extracting
+# spaCy entities and dictionary matches for countries/subregions
+
 # TP: number of regions + subregions that are actually in recorded data
+  # for subregions, allow prediction to be substring of recorded region, as
+  # recorded regions tend to be very descriptive
+
 # FP: number of regions + subregions not in recorded data
+  # i.e: prediction is not a substring of any of the recorded data
+
 # FN: number of regions + subregions in recorded data but not in predictions
+  # i.e: recorded region is not a substring of any predictions, and no predictions
+  #      are substrings of the recorded region
 
 get_false_pos_locality <- function(locality, pred_locality) {
   locality <- str_split(locality, '; ')[[1]]
@@ -138,7 +151,7 @@ get_false_pos_locality <- function(locality, pred_locality) {
     pred_subregions <-
       str_split(str_extract(pred, '(?<=\\().*(?=\\))'), ' \\| ')[[1]]
     
-    # continue writing this later
+    # 
   }
 }
 
@@ -185,8 +198,9 @@ check_microsp_prediction <- function(species, pred_species) {
   return(FALSE)
 }
 
-
+# Only 49% accuracy w/ genus species name extraction
 microsp_host_preds <- read_csv('../../results/microsp_and_host_predictions.csv') %>%
   mutate(species_formatted = format_species_name(species)) %>%
   rowwise() %>%
-  mutate(microsp_predicted = check_microsp_prediction(species_formatted, pred_species))
+  mutate(microsp_predicted = check_microsp_prediction(species_formatted, pred_species),
+         microsp_predicted_2 = check_microsp_prediction(species_formatted, pred_species_2))

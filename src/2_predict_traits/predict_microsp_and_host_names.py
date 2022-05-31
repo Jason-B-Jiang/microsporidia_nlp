@@ -19,6 +19,7 @@ from taxonerd import TaxoNERD
 import spacy
 from spacy.matcher import PhraseMatcher
 from pathlib import Path
+from pygbif import speces
 
 ################################################################################
 
@@ -95,7 +96,8 @@ microsp_data = microsp_data.assign(
 # Initialize Taxonerd species entity predictor
 taxonerd = TaxoNERD(model="en_ner_eco_biobert",  # use more accurate model
                     prefer_gpu=False,
-                    with_abbrev=False)
+                    with_abbrev=False,
+                    with_linking="gbif_backbone")
 
 # Write helper function for extracting Taxonerd predictions from text
 def predict_taxonerd_hosts(microsp: str, txt: str, taxonerd) -> str:
@@ -155,7 +157,7 @@ def get_microsp_species(taxonerd_species: str) -> str:
 
 microsp_data = microsp_data.assign(
     pred_species_2 = lambda df: df['pred_hosts'].map(
-        lambda species: get_microsp_species(species)
+        lambda species: get_microsp_species(species), na_action='ignore'
     )
 )
 

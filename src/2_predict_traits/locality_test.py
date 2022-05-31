@@ -1,10 +1,23 @@
+# -----------------------------------------------------------------------------
+#
+# Predict microsporidia localities from paper titles + abstracts: V2
+#
+# Jason Jiang - Created: 2022/05/25
+#               Last edited: 2022/05/31
+#
+# Mideo Lab - Microsporidia text mining
+#
+#
+# -----------------------------------------------------------------------------
+
 from flashgeotext.geotext import GeoText
 import spacy
 import geocoder
 import pickle
 from os.path import exists
-from typing import Dict, List
+from typing import Dict, List, Optional
 import pandas as pd
+import re
 from pathlib import Path
 
 ################################################################################
@@ -127,7 +140,30 @@ def remove_leading_determinant(span: spacy.tokens.span.Span) -> str:
     return span.text
 
 
-def assign_to_region_or_subregion(locations: List[str], geo_preds) -> None:
+def get_most_likely_region(geonames_result, geo_preds_regions) -> Optional[str]:
+    """Docstring goes here.
+    """
+    if not geonames_result:
+        return None
+
+    likely_regions = [res.country for res in geonames_result if res.country \
+        in geo_preds_regions]
+
+    top_region_hit = geonames_result[0].country
+    
+    if top_region_hit in likely_regions or not likely_regions:
+        # if top region from geonames for this locality was also found previously
+        # in text, or no regions found by flashgeotext could be identified as
+        # region for this subregion, return the top region result from geonames
+        return top_region_hit
+    else:
+        # top hit wasn't part of geonames predictions, so return the first
+        # flashgeotext predicted region that was also found in search results
+        return likely_regions[0]
+    
+
+def assign_to_region_or_subregion(locations: List[str], geo_preds,
+                                  found_as: List[List[str]]) -> None:
     """For a list of locations, check if it is a region or subregion of some
     other region, and update geo_preds dictionary accordingly.
 
@@ -139,9 +175,10 @@ def assign_to_region_or_subregion(locations: List[str], geo_preds) -> None:
     Return:
         None, mutates geo_preds in-place
     """
-    for loc in locations:
+    for i in range(len(locations)):
+        loc = locations[i]
         if not loc in GEONAMES_CACHE:
-            geonames_result = geocoder.geonames(loc, key = USERNAME)
+            geonames_result = geocoder.geonames(loc, key=USERNAME, maxRows=50)
 
             # store geonames search result in cache for future access
             GEONAMES_CACHE[loc] = geonames_result
@@ -149,30 +186,33 @@ def assign_to_region_or_subregion(locations: List[str], geo_preds) -> None:
             # fetch cached geonames search result for location
             geonames_result = GEONAMES_CACHE[loc]
 
-        loc_country = geonames_result.country
-        if not loc_country:  # no origin country for location, treat as a region
-            geo_preds['regions'][loc] = {'found_as': [loc], 'subregions': []}
+        loc_region = get_most_likely_region(geonames_result,
+                                            list(geo_preds['regions'].keys()))
+
+        if not loc_region:  # no origin country for location, treat as a region
+            geo_preds['regions'][loc] = {'found_as': found_as[i], 'subregions': []}
         else:  # assign location to origin country as its region
-            if loc_country not in geo_preds['regions']:
+            if loc_region not in geo_preds['regions']:
                 # origin country of location from geonames not yet in geo_preds
-                geo_preds['regions'][loc_country] = {'found_as': [loc_country],
-                                                     'subregions': [loc]}
+                geo_preds['regions'][loc_region] = {'found_as': [loc_region],
+                                                     'subregions': found_as[i]}
             else:
-                geo_preds['regions'][loc_country]['subregions'].append(loc)
+                if found_as[i] not in geo_preds['regions'][loc_region]['subregions']:
+                    geo_preds['regions'][loc_region]['subregions'].append(found_as[i])
 
 
-def format_localitity_string(locality_preds: Dict[str, List[str]]) -> str:
+def format_localitity_string(locality_preds: Dict[str, Dict[str, list]]) -> str:
     """Format dictionary of region predictions + their subregions as a string,
     in the form of 'Region 1 (subregion A | subregion B); Region 2 (...); ...'
     """
     loc_strs = []
     for region in locality_preds:
         loc_strs.append(
-            region + ' (' + ' | '.join(locality_preds[region]['subregions']) + ')'
+            region + ' (' + ' | '.join([s[0] for s in locality_preds[region]['subregions']]) + ')'
         )
 
     return '; '.join(loc_strs)
-        
+
 
 def predict_localities(txt: str) ->  Dict[str, dict]:
     """For a text, use flashgeotext + spaCy to predict countries and their
@@ -193,14 +233,105 @@ def predict_localities(txt: str) ->  Dict[str, dict]:
 
     # update geo_preds with spaCy predictions, adding regions and subregions
     # to regions as appropriate
-    assign_to_region_or_subregion([remove_leading_determinant(pred) for pred in spacy_preds],
-                                  geo_preds)
+    # also remove redundant spacy entities
+    tmp = list(set([remove_leading_determinant(pred) for pred in spacy_preds]))
+    assign_to_region_or_subregion(tmp, geo_preds, [[t] for t in tmp])
 
     # update geo_preds with subregions from itself, adding the subregions to
     # its corresponding regions as appropriate
-    assign_to_region_or_subregion(list(geo_preds['subregions'].keys()), geo_preds)
+    assign_to_region_or_subregion(list(geo_preds['subregions'].keys()), geo_preds,
+                                       [geo_preds['subregions'][sub]['found_as'] for sub in geo_preds['subregions']])
 
-    return format_localitity_string(geo_preds['regions'])
+    return geo_preds['regions']  # use format locality_string later
+
+
+def get_locality_dict(locs: str) -> Dict[str, List[str]]:
+    """Converted recorded localities into dictionary, with regions as keys and
+    lists of associated subregions as values.
+    """
+    locs = [s.strip() for s in locs.split(';')]
+    locs_dict = {}
+
+    for loc in locs:
+        region = re.search('((?<=\) ).+|.+?(?= \())', loc)
+        if region:
+            region = region.group(0)
+        else:
+            region = loc
+
+        subregions = re.search('(?<=\().+(?=\))', loc)
+        if subregions:
+            subregions = subregions.group(0).split(' | ')
+        else:
+            subregions = []
+        
+        locs_dict[region] = subregions
+
+    return locs_dict
+
+
+def normalize_recorded_localities(locs: str) -> dict:
+    """For a manually recorded entry of localities for a microsporidia species,
+    normalize region and subregion names to what is found by flashgeotext,
+    to allow for direct comparisions between recorded and predicted localities.
+
+    Input:
+        locs: string of recorded localities ('Locality' column) from supp. table
+              S1 from Murareanu et al.
+    Return:
+        string formatted in same way as locs, but regions + subregions are
+        renamed with normalized names from flashgeotext
+    """
+    loc_normalized_names = predict_localities(locs)
+    locs = get_locality_dict(locs)
+
+    # list of lists for each region and subregion, where each sublist is
+    # all 'found_as' names for the region and subregion
+    all_region_names =\
+        [[region] + loc_normalized_names[region]['found_as'] for \
+            region in loc_normalized_names]
+
+    all_subregion_names = []
+    for region in loc_normalized_names:
+        all_subregion_names.extend(loc_normalized_names[region]['subregions'])
+
+    # replace region + subregion names in locs w/ normalized names from
+    # loc_normalized_names
+    regions = list(locs.keys())
+    for region in regions:
+        region_matches = [i for i, names in enumerate(all_region_names) if \
+            any([name for name in names if name in region])]
+
+        if region_matches:
+            region_normalized = all_region_names[region_matches[0]][0]
+        else:
+            # region wasn't predicted by spacy + flashgeonames
+            region_normalized = region
+        
+        for i in range(len(locs[region])):
+            # get indices in all_subregion_names where subregion is found
+            subregion_matches = [j for j, names in enumerate(all_subregion_names) \
+                if [name for name in names if name in locs[region][i]]]
+            
+            # replace subregions w/ normalized names if found
+            # do nothing if no matches for subregion found
+            if subregion_matches:
+                # more than 1 subregion associated with this recorded subregion
+                # ex: a city and its associated province was recorded
+                # replace old entry with list
+                if len(subregion_matches) > 1:
+                    # take first entry in each sublist as "normalized" subregion
+                    # name
+                    locs[region][i] =\
+                        [all_subregion_names[i][0] if \
+                            isinstance(all_subregion_names[i], list) \
+                                else all_subregion_names[i] for i in subregion_matches]
+                else:
+                    locs[region][i] = all_subregion_names[subregion_matches[0]][0]
+        
+        locs[region_normalized] = locs.pop(region)
+
+    return locs
 
 ################################################################################
 
