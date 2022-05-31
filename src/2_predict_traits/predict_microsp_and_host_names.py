@@ -3,7 +3,7 @@
 # Predict microsporidia species names + hosts from paper titles + abstracts
 #
 # Jason Jiang - Created: 2022/05/19
-#               Last edited: 2022/05/27
+#               Last edited: 2022/05/31
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -19,7 +19,7 @@ from taxonerd import TaxoNERD
 import spacy
 from spacy.matcher import PhraseMatcher
 from pathlib import Path
-from pygbif import speces
+from pygbif import species
 
 ################################################################################
 
@@ -36,7 +36,7 @@ NEW_SPECIES_INDICATORS =\
 NEW_SPECIES_INDICATORS =  r'{}'.format('(' + '|'.join(NEW_SPECIES_INDICATORS) + ')')
  
 NEW_SPECIES = r'{}'.format(  # final regex pattern for new species in text
-    (f"{SPECIES},? ?{NEW_SPECIES_INDICATORS}|[A-Z][a-z]+ [Ss][Pp]\.?")
+    (f"{SPECIES},? {NEW_SPECIES_INDICATORS}|[A-Z][a-z]+ [Ss][Pp]\.?")
 )
 
 ################################################################################
@@ -96,8 +96,23 @@ microsp_data = microsp_data.assign(
 # Initialize Taxonerd species entity predictor
 taxonerd = TaxoNERD(model="en_ner_eco_biobert",  # use more accurate model
                     prefer_gpu=False,
-                    with_abbrev=False,
-                    with_linking="gbif_backbone")
+                    with_abbrev=False)
+
+# Helper function for normalizing all predicted/recorded species names w/ GBIF,
+# so we can directly compare predicted and recorded species names
+def get_gbif_normalized_name(sp: str) -> str:
+    """Docstring goes here.
+    """
+    gbif_hit = species.name_backbone(sp)
+    if gbif_hit:
+        if gbif_hit['synonym']:
+            # get canonical name for this synonymized species name
+            return gbif_hit['canonicalName']  # TODO - use speciesKey
+        
+        return gbif_hit['canonicalName']
+    
+    return sp  # no hits from GBIF search for species name, return as is
+
 
 # Write helper function for extracting Taxonerd predictions from text
 def predict_taxonerd_hosts(microsp: str, txt: str, taxonerd) -> str:
