@@ -3,7 +3,7 @@
 # Predict microsporidia localities from paper titles + abstracts: V2
 #
 # Jason Jiang - Created: 2022/05/25
-#               Last edited: 2022/05/31
+#               Last edited: 2022/06/01
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -19,6 +19,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 import re
 from pathlib import Path
+import time
 
 ################################################################################
 
@@ -201,7 +202,7 @@ def assign_to_region_or_subregion(locations: List[str], geo_preds,
                     geo_preds['regions'][loc_region]['subregions'].append(found_as[i])
 
 
-def format_localitity_string(locality_preds: Dict[str, Dict[str, list]]) -> str:
+def format_locality_string(locality_preds: Dict[str, Dict[str, list]]) -> str:
     """Format dictionary of region predictions + their subregions as a string,
     in the form of 'Region 1 (subregion A | subregion B); Region 2 (...); ...'
     """
@@ -349,6 +350,15 @@ microsp_data = microsp_data.assign(
     # pred = predicted
     pred_locality = lambda df: df['title_abstract'].map(
         lambda txt: predict_localities(txt)
+    )
+)
+
+# Wait an hour before normalizing recorded locality names to prevent exceeding
+# hourly search quotas for geonames
+time.sleep(3600)
+microsp_data = microsp_data(
+    locality_normalized = lambda df: df['locality'].map(
+        lambda locs: normalize_recorded_localities(locs), na_action='ignore'
     )
 )
 

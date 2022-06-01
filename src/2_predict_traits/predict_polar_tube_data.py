@@ -28,6 +28,11 @@ matcher = Matcher(nlp.vocab)
 
 ################################################################################
 
+## Cache for texts that have already been processed by spacy
+SPACY_CACHE = {}
+
+################################################################################
+
 ## Define matcher for extracting polar tube coil data from text
 
 PT_RANGE = r'(to|or|-|and)'  # let this appear one or more times
@@ -37,7 +42,7 @@ PT_COIL = r'([Cc]oi[a-z](s|ed)?|[Ss]pire(s|d)?|[Tt]urn[s]?|[Tt]wist(s|ed)?)'
 
 # for excluding measurements in microns, as these aren't measuring number of polar
 # tube coils
-MICRON_TERMS = r'(μm|μ|mkm|um|mum)'
+MICRON_TERMS = r'(μm|μ|mkm|um|mum|µm)'
 
 # NOTE: if a range of polar tube coils is found, the matcher will return both the
 # full range match, and the partial range match
@@ -94,21 +99,34 @@ def extract_pt_coils(pt_sent: spacy.tokens.span.Span) -> str:
         # no polar tube coil data was detected in sentence
         return ''
 
+    # get longest span capturing the polar tube coil data
+    # check match spans for overlap with other spans, and merge overlapping
+    # spans into the longest possible span containing polar tube coil data
     curr_start = matches[0][1]
     curr_end = matches[0][2]
     for i in range(1, len(matches)):
+        # current match doesn't overlap with previous match, so set this span
+        # as current start and end
         if matches[i][2] > curr_end:
             curr_start = matches[i][1]
             curr_end = matches[i][2]
 
         elif matches[i][2] == curr_end and matches[i][1] < curr_start:
+            # current match falls within previous match (i.e: is a substring of
+            # the previous match), so remove from our matches
             curr_start = matches[i][1]
             matches[i - 1] = None
 
         elif matches[i][1] > curr_start:
+            # current match is substring falling between start and end of previous
+            # match, so remove from our matches
             matches[i] = None
 
     matches = list(filter(lambda s: s is not None, matches))
+
+    # remove any matches with microns detected, as these probably aren't measuring
+    # number of polar tube coils
+    # ex: could be polar tube length, or size of microsporidia spores
     matches_text = \
         list(filter(
             lambda s: not re.search(MICRON_TERMS, s),
@@ -129,7 +147,12 @@ def predict_polar_tube_coils(txt: str) -> Optional[str]:
     Input:
         txt: Title + abstract of a microsporidia paper.
     """
-    doc = nlp(txt)
+    if txt in SPACY_CACHE:
+        doc = SPACY_CACHE[txt]
+    else:
+        doc = nlp(txt)
+        SPACY_CACHE[txt] = doc
+
     pt_sents = [sent for sent in doc.sents if re.search(PT_REGEX, sent.text)]
 
     if not pt_sents:
@@ -164,8 +187,110 @@ microsp_data = microsp_data.assign(
 
 ################################################################################
 
+## Predicting polar tube length
+PT_LENGTH_DATA_PATTERN = [{'LOWER': 'polar', 'OP': '?'},
+                          {'TEXT': {'REGEX': '([Ff]ilament|[Tt]ub(ul)?e)[s]?'}},
+                          # allow for 3 extra intervening words between polar
+                          # tube mention and measure
+                          {'TEXT': {'REGEX': '[a-zA-Z]+'}, 'OP': '?'},
+                          {'TEXT': {'REGEX': '[a-zA-Z]+'}, 'OP': '?'},
+                          {'TEXT': {'REGEX': '[a-zA-Z]+'}, 'OP': '?'},
+                          {'POS': 'NUM'},
+                          {'TEXT': {'REGEX': PT_RANGE}, 'OP': '?'},
+                          {'POS': 'NUM', 'OP': '?'},
+                          {'TEXT': {'REGEX': MICRON_TERMS}}]
+
+matcher.remove('pt_coil_data')
+matcher.add('pt_length_data', [PT_LENGTH_DATA_PATTERN])
+
+
+def extract_pt_length(pt_sent: spacy.tokens.span.Span) -> str:
+    """For a spaCy span representing a sentence containing polar tubule data,
+    return a ' ||| ' separated string of polar tube length measures extracted
+    from the sentence.
+
+    NOTE: most of this code is duplicated from extract_pt_coil. I should refactor
+          my code to remove this code duplication.
+
+    Input:
+        pt_sents: spaCy span representing a sentence with polar tube data
+
+    Return:
+        ' ||| ' separated string of polar tube length measures
+        Empty string if no polar tube coil length is found
+    """
+    matches = matcher(pt_sent)
+
+    if not matches:
+        # no polar tube coil data was detected in sentence
+        return ''
+
+    # get longest span capturing the polar tube coil data
+    # check match spans for overlap with other spans, and merge overlapping
+    # spans into the longest possible span containing polar tube coil data
+    curr_start = matches[0][1]
+    curr_end = matches[0][2]
+    for i in range(1, len(matches)):
+        # current match doesn't overlap with previous match, so set this span
+        # as current start and end
+        if matches[i][2] > curr_end:
+            curr_start = matches[i][1]
+            curr_end = matches[i][2]
+
+        elif matches[i][2] == curr_end and matches[i][1] < curr_start:
+            # current match falls within previous match (i.e: is a substring of
+            # the previous match), so remove from our matches
+            curr_start = matches[i][1]
+            matches[i - 1] = None
+
+        elif matches[i][1] > curr_start:
+            # current match is substring falling between start and end of previous
+            # match, so remove from our matches
+            matches[i] = None
+
+    matches = list(filter(lambda s: s is not None, matches))
+    matches_text = [pt_sent[start : end].text for id, start, end in matches]
+    
+    return ' ||| '.join(matches_text)
+
+
+def predict_polar_tube_length(txt: str) -> Optional[str]:
+    """Predict polar tube length measurements from a text, getting sentences
+    containing polar tube data and extracting polar tube length data if
+    available.
+    """
+    if txt in SPACY_CACHE:
+        doc = SPACY_CACHE[txt]
+    else:
+        doc = nlp(txt)
+        SPACY_CACHE[txt] = doc
+
+    pt_sents = [sent for sent in doc.sents if re.search(PT_REGEX, sent.text)]
+
+    if not pt_sents:
+        # None if no sentences containing polar tube data are detected
+        return None
+
+    pt_length_preds = list(map(extract_pt_length, pt_sents))
+    pt_length_preds = list(filter(lambda s: s != '', pt_length_preds))
+
+    if pt_length_preds:
+        return ' ||| '.join(pt_length_preds)
+    else:
+        return None
+
+
+# Add column for predicted polar tube length measurements
+microsp_data = microsp_data.assign(
+    pred_pt = lambda df: df['title_abstract'].map(
+        lambda txt: predict_polar_tube_length(txt)
+    )
+)
+
+################################################################################
+
 # Write predictions to results folder
 microsp_data[['species', 'title_abstract', 'pred_pt_coil', 'pt_coils_range',
-              'pt_coils_avg']].to_csv(
+              'pt_coils_avg', 'pred_pt', 'pt_max', 'pt_min', 'pt_avg']].to_csv(
     Path('../../results/microsp_pt_predictions.csv')
     )
