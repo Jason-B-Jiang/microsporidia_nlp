@@ -3,7 +3,7 @@
 # Predict microsporidia polar tube coils + lengths from papers
 #
 # Jason Jiang - Created: 2022/05/20
-#               Last edited: 2022/05/23
+#               Last edited: 2022/06/02
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -42,7 +42,7 @@ PT_COIL = r'([Cc]oi[a-z](s|ed)?|[Ss]pire(s|d)?|[Tt]urn[s]?|[Tt]wist(s|ed)?)'
 
 # for excluding measurements in microns, as these aren't measuring number of polar
 # tube coils
-MICRON_TERMS = r'(μm|μ|mkm|um|mum|µm)'
+MICRON_TERMS = r'(μm|μ|mkm|um|mum|µm|mu|microns?)'
 
 # NOTE: if a range of polar tube coils is found, the matcher will return both the
 # full range match, and the partial range match
@@ -188,20 +188,39 @@ microsp_data = microsp_data.assign(
 ################################################################################
 
 ## Predicting polar tube length
-PT_LENGTH_DATA_PATTERN = [{'LOWER': 'polar', 'OP': '?'},
+PT_LENGTH_DATA_PATTERN = [{'LOWER': 'polar'},
                           {'TEXT': {'REGEX': '([Ff]ilament|[Tt]ub(ul)?e)[s]?'}},
-                          # allow for 3 extra intervening words between polar
-                          # tube mention and measure
-                          {'TEXT': {'REGEX': '[a-zA-Z]+'}, 'OP': '?'},
-                          {'TEXT': {'REGEX': '[a-zA-Z]+'}, 'OP': '?'},
-                          {'TEXT': {'REGEX': '[a-zA-Z]+'}, 'OP': '?'},
+                          # allow for 3 intervening tokens between polar tube
+                          # mention and length measure
+                          # ex: words (ex: "is"), punctuation, etc
+                          {'TEXT': {'REGEX': '.+'}, 'OP': '?'},
+                          {'TEXT': {'REGEX': '.+'}, 'OP': '?'},
+                          {'TEXT': {'REGEX': '.+'}, 'OP': '?'},
                           {'POS': 'NUM'},
                           {'TEXT': {'REGEX': PT_RANGE}, 'OP': '?'},
                           {'POS': 'NUM', 'OP': '?'},
                           {'TEXT': {'REGEX': MICRON_TERMS}}]
 
+# If polar tube length measure isn't properly spaced (ex: measurement + microns
+# all mushed together, like "94.2±11.97μm"), allow numeric token w/ micron term
+# inside it
+PT_LENGTH_DATA_PATTERN_2 = [{'LOWER': 'polar'},
+                          {'TEXT': {'REGEX': '([Ff]ilament|[Tt]ub(ul)?e)[s]?'}},
+                          # allow for 3 intervening tokens between polar tube
+                          # mention and length measure
+                          # ex: words (ex: "is"), punctuation, etc
+                          {'TEXT': {'REGEX': '.+'}, 'OP': '?'},
+                          {'TEXT': {'REGEX': '.+'}, 'OP': '?'},
+                          {'TEXT': {'REGEX': '.+'}, 'OP': '?'},
+                          # in case polar tube length measure isn't properly spaced
+                          # (ex: measurement + microns all mushed together, like
+                          # "94.2±11.97μm", allow numeric token w/ micron term)
+                          # TODO - rewrite this regex pattern using f string + format
+                          {'POS': 'NUM', 'TEXT': {'REGEX': '(μm|μ|mkm|um|mum|µm|mu|microns?)'}}]
+
 matcher.remove('pt_coil_data')
 matcher.add('pt_length_data', [PT_LENGTH_DATA_PATTERN])
+matcher.add('pt_length_data_2', [PT_LENGTH_DATA_PATTERN_2])
 
 
 def extract_pt_length(pt_sent: spacy.tokens.span.Span) -> str:
@@ -224,6 +243,12 @@ def extract_pt_length(pt_sent: spacy.tokens.span.Span) -> str:
     if not matches:
         # no polar tube coil data was detected in sentence
         return ''
+    else:
+        # if matches from first polar tube length pattern, keep only matches from
+        # this pattern as more specific
+        if [match for match in matches if nlp.vocab.strings[match[0]] == 'pt_length_data']:
+            matches = list(filter(lambda match: nlp.vocab.strings[match[0]] == 'pt_length_data',
+                                  matches))
 
     # get longest span capturing the polar tube coil data
     # check match spans for overlap with other spans, and merge overlapping
@@ -271,12 +296,14 @@ def predict_polar_tube_length(txt: str) -> Optional[str]:
         # None if no sentences containing polar tube data are detected
         return None
 
-    pt_length_preds = list(map(extract_pt_length, pt_sents))
-    pt_length_preds = list(filter(lambda s: s != '', pt_length_preds))
+    pt_length_preds = [extract_pt_length(sent) for sent in pt_sents]
+    pt_length_preds = [pred for pred in pt_length_preds if pred != '']
 
     if pt_length_preds:
         return ' ||| '.join(pt_length_preds)
     else:
+        # return None instead of empty string, so we have NaNs in pandas dataframe
+        # where no polar tube length predictions are made
         return None
 
 

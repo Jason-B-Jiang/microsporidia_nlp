@@ -3,7 +3,7 @@
 # Evaluate accuracy of predicted microsporidia traits
 #
 # Jason Jiang - Created: 2022/05/17
-#               Last edited: 2022/05/30
+#               Last edited: 2022/06/02
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -119,6 +119,40 @@ pt_coil_preds <- read_csv('../../results/microsp_pt_predictions.csv') %>%
   mutate(precision = get_pt_coil_precision(pt_coils_avg, pred_pt_coil_avg),
          recall = get_pt_coil_recall(pt_coils_avg, pred_pt_coil_avg))
   
+
+################################################################################
+
+## Evaluate polar tube length predictions
+
+extract_pt_length_value <- Vectorize(function(pred_pt) {
+  # ---------------------------------------------------------------------------
+  # Extract polar tube length from string where length was found, and convert
+  # ranges of length to averages.
+  # ---------------------------------------------------------------------------
+  mean(as.numeric(
+    str_split(str_extract(pred_pt, '\\d+\\.?\\d?(–|-| to )?\\d*\\.?\\d?'),
+            '(–|-| to )')[[1]]
+  ))
+})
+
+
+format_recorded_pt_length <- Vectorize(function(pt_avg) {
+  as.numeric(str_split(pt_avg, ' ')[[1]][1])
+})
+
+pt_len_preds <- read_csv('../../results/microsp_pt_predictions.csv') %>%
+  select(species, title_abstract, pred_pt, pt_max, pt_min, pt_avg) %>%
+  filter(!is.na(pred_pt) | !is.na(pt_max) | !is.na(pt_min) | !is.na(pt_avg)) %>%
+  mutate(pred_pt_formatted = ifelse(is.na(pred_pt), NA, extract_pt_length_value(pred_pt)),
+         pt_avg_formatted = format_recorded_pt_length(pt_avg),
+         tp = ifelse(!is.na(pred_pt_formatted),
+                     as.numeric(pred_pt_formatted == pt_avg_formatted),
+                     0),
+         fp = as.numeric(!is.na(pred_pt_formatted) & pred_pt_formatted != pt_avg_formatted),
+         fn = as.numeric(is.na(pred_pt_formatted) & !is.na(pt_avg_formatted)))
+
+pt_len_precision <- sum(pt_len_preds$tp) / (sum(pt_len_preds$tp) + sum(pt_len_preds$fp))
+pt_len_recall <- sum(pt_len_preds$tp) / (sum(pt_len_preds$tp) + sum(pt_len_preds$fn))
 
 ################################################################################
 
