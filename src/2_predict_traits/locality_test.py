@@ -32,12 +32,12 @@ nlp = spacy.load('en_core_web_md')
 ## Global variables
 SPACY_LOCALITIES = ['FAC', 'GPE', 'LOC']  # spacy entities corresponding to localities
 
-if exists('geonames_cache.pickle'):
-    # load in cached geonames search results
-    with open('geonames_cache.pickle', 'r') as f:
-        GEONAMES_CACHE = pickle.load(f)
-else:
-    GEONAMES_CACHE = {}
+# if exists('geonames_cache.pickle'):
+#     # load in cached geonames search results
+#     with open('geonames_cache.pickle', 'r') as f:
+#         GEONAMES_CACHE = pickle.load(f)
+# else:
+#     GEONAMES_CACHE = {}
 
 USERNAME = 'jiangjas'  # fill in your own geonames username here
 
@@ -243,7 +243,7 @@ def predict_localities(txt: str) ->  Dict[str, dict]:
     assign_to_region_or_subregion(list(geo_preds['subregions'].keys()), geo_preds,
                                        [geo_preds['subregions'][sub]['found_as'] for sub in geo_preds['subregions']])
 
-    return geo_preds['regions']  # use format locality_string later
+    return get_locs_str(geo_preds['regions'])  # use format locality_string later
 
 
 def get_locality_dict(locs: str) -> Dict[str, List[str]]:
@@ -269,6 +269,23 @@ def get_locality_dict(locs: str) -> Dict[str, List[str]]:
         locs_dict[region] = subregions
 
     return locs_dict
+
+
+def get_locs_str(locs) -> str:
+    """Docstring goes here.
+    """
+    loc_str = []
+    for loc in locs:
+        subs = []
+        for sub in locs[loc]['subregions']:
+            if isinstance(sub, list):
+                subs.append(', '.join(sub))
+            else:
+                subs.append(sub)
+        
+        loc_str.append(loc + ' (' + ' | '.join(subs) + ')')
+    
+    return '; '.join(loc_str)
 
 
 def normalize_recorded_localities(locs: str) -> dict:
@@ -334,6 +351,8 @@ def normalize_recorded_localities(locs: str) -> dict:
 
     return locs
 
+normalize_recorded_localities("(Near Greifswald) Germany")
+
 ################################################################################
 
 ## Make locality predictions for each microsporidia species paper
@@ -355,8 +374,8 @@ microsp_data = microsp_data.assign(
 
 # Wait an hour before normalizing recorded locality names to prevent exceeding
 # hourly search quotas for geonames
-time.sleep(3600)
-microsp_data = microsp_data(
+# time.sleep(3600)
+microsp_data = microsp_data.assign(
     locality_normalized = lambda df: df['locality'].map(
         lambda locs: normalize_recorded_localities(locs), na_action='ignore'
     )
