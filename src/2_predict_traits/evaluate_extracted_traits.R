@@ -3,7 +3,7 @@
 # Evaluate accuracy of predicted microsporidia traits
 #
 # Jason Jiang - Created: 2022/05/17
-#               Last edited: 2022/06/02
+#               Last edited: 2022/06/10
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -238,3 +238,81 @@ microsp_host_preds <- read_csv('../../results/microsp_and_host_predictions.csv')
   rowwise() %>%
   mutate(microsp_predicted = check_microsp_prediction(species_formatted, pred_species),
          microsp_predicted_2 = check_microsp_prediction(species_formatted, pred_species_2))
+
+################################################################################
+
+## Evaluate Microsporidia infection site predictions
+
+get_infection_site_tp <- function(recorded, pred) {
+  # ---------------------------------------------------------------------------
+  # Docstring goes here
+  # ---------------------------------------------------------------------------
+  if (is.na(pred)) {
+    return(0)
+  }
+  
+  if (is.na(recorded)) {
+    recorded <- character(0)
+  } else {
+    recorded <- str_split(recorded, '; ')[[1]]
+  }
+  
+  pred <- str_split(pred, '; ')[[1]]
+  
+  return(length(recorded[recorded %in% pred]))
+}
+
+
+get_infection_site_fp <- function(recorded, pred) {
+  # ---------------------------------------------------------------------------
+  # Docstring goes here
+  # ---------------------------------------------------------------------------
+  if (is.na(pred)) {
+    return(0)
+  }
+  
+  if (is.na(recorded)) {
+    recorded <- character(0)
+  } else {
+    recorded <- str_split(recorded, '; ')[[1]]
+  }
+
+  pred <- str_split(pred, '; ')[[1]]
+  
+  return(length(pred[!(pred %in% recorded)]))
+}
+
+
+get_infection_site_fn <- function(recorded, pred) {
+  # ---------------------------------------------------------------------------
+  # Docstring goes here
+  # ---------------------------------------------------------------------------
+  if (is.na(pred)) {
+    return(0)
+  }
+  
+  if (is.na(recorded)) {
+    recorded <- character(0)
+  } else {
+    recorded <- str_split(recorded, '; ')[[1]]
+  }
+  
+  pred <- str_split(pred, '; ')[[1]]
+  
+  return(length(recorded[!(recorded %in% pred)]))
+}
+
+
+microsp_infection_preds <- read_csv('../../results/microsp_infection_site_predictions.csv') %>%
+  filter(num_papers < 2) %>%  # look at species with only 1 paper for now
+  rowwise() %>%
+  mutate(tp = get_infection_site_tp(infection_site_normalized, pred_infection_site),
+         fp = get_infection_site_fp(infection_site_normalized, pred_infection_site),
+         fn = get_infection_site_fn(infection_site_normalized, pred_infection_site))
+
+# 28% precision, 36% recall
+infection_precision <-
+  sum(microsp_infection_preds$tp) / (sum(microsp_infection_preds$tp) + sum(microsp_infection_preds$fp))
+
+infection_recall <-
+  sum(microsp_infection_preds$tp) / (sum(microsp_infection_preds$tp) + sum(microsp_infection_preds$fn))

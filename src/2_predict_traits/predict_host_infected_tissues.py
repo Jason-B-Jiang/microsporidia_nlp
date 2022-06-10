@@ -3,7 +3,7 @@
 # Predict microsporidia sites of infection in hosts
 #
 # Jason Jiang - Created: 2022/06/02
-#               Last edited: 2022/06/08
+#               Last edited: 2022/06/10
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -278,7 +278,8 @@ microsp_data[['infection_site_normalized', 'pred_infection_site']] = \
         txt, sites_formatted in \
             zip(microsp_data.title_abstract, microsp_data.infection_site_formatted)]
 
-microsp_data[['species', 'title_abstract', 'infection_site', 'infection_site_formatted',
-'infection_site_normalized', 'pred_infection_site']].to_csv(
+microsp_data[['species', 'num_papers', 'title_abstract', 'infection_site',
+              'infection_site_formatted', 'infection_site_normalized',
+              'pred_infection_site']].to_csv(
     Path('../../results/microsp_infection_site_predictions.csv')
     )
