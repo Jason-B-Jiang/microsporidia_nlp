@@ -3,7 +3,7 @@
 # Predict microsporidia localities from paper titles + abstracts: V2
 #
 # Jason Jiang - Created: 2022/05/25
-#               Last edited: 2022/06/12
+#               Last edited: 2022/06/15
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -260,13 +260,22 @@ def get_locality_dict(locs: str) -> Dict[str, List[str]]:
         else:
             region = loc
 
+        # check if recorded region is actually a subregion of some place
+        # ex: Siberia is a subregion of Russia
+        geonames_res = geocoder.geonames(region, key=USERNAME)
+        if geonames_res and geonames_res[0].country and geonames_res[0].country != region:
+            locs_dict[geonames_res[0].country] = [region]
+            region = geonames_res[0].country
+        else:
+            locs_dict[region] = []
+
         subregions = re.search('(?<=\().+(?=\))', loc)
         if subregions:
             subregions = subregions.group(0).split(' | ')
         else:
             subregions = []
         
-        locs_dict[region] = subregions
+        locs_dict[region].extend(subregions)
 
     return locs_dict
 
@@ -351,10 +360,7 @@ def normalize_recorded_localities(locs: str) -> dict:
 
     return locs, get_locs_str(locs)
 
-normalize_recorded_localities("USA (Florida | Louisiana)")
-normalize_recorded_localities("(pool in tomsk region, Western Siberia) Russia")
-normalize_recorded_localities("USA (Florida, Wacisaa River, Jefferson County)")
-normalize_recorded_localities("Canada (Queen Charlotte Sound)")
+normalize_recorded_localities('Siberia')
 
 ################################################################################
 

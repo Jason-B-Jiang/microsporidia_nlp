@@ -302,17 +302,198 @@ get_infection_site_fn <- function(recorded, pred) {
   return(length(recorded[!(recorded %in% pred)]))
 }
 
+infection_sites_in_abstract <- function(title_abstract, infection_site) {
+  infection_site <- sapply(str_split(infection_site, '; ')[[1]],
+                           function(x) {tolower(str_remove(x, ' ?\\(.+\\)'))})
+  
+  return(any(str_detect(tolower(title_abstract), infection_site)))
+}
+
 
 microsp_infection_preds <- read_csv('../../results/microsp_infection_site_predictions.csv') %>%
   filter(num_papers < 2) %>%  # look at species with only 1 paper for now
   rowwise() %>%
   mutate(tp = get_infection_site_tp(infection_site_normalized, pred_infection_site),
          fp = get_infection_site_fp(infection_site_normalized, pred_infection_site),
-         fn = get_infection_site_fn(infection_site_normalized, pred_infection_site))
+         fn = get_infection_site_fn(infection_site_normalized, pred_infection_site),
+         infection_site_in_abstract = infection_sites_in_abstract(title_abstract, infection_site))
 
 # 28% precision, 36% recall
+# 40% precision, 50% recall if exclude cases where tissues not in abstract
 infection_precision <-
   sum(microsp_infection_preds$tp) / (sum(microsp_infection_preds$tp) + sum(microsp_infection_preds$fp))
 
 infection_recall <-
   sum(microsp_infection_preds$tp) / (sum(microsp_infection_preds$tp) + sum(microsp_infection_preds$fn))
+
+################################################################################
+
+## Evaluate predicted localities
+
+get_region_subregions <- function(locality) {
+  locality <- str_split(locality, '; ')[[1]]
+  region_subregions <- list()
+  
+  for (loc in locality) {
+    region <- str_extract(loc, '.+(?= \\()')[[1]]
+    subregions <- str_extract(loc, '(?<=\\().+?(?=\\))')
+    
+    if (!is.na(subregions)) {
+      region_subregions[[region]] <- str_split(subregions, ' \\| ')[[1]]
+    } else {
+      region_subregions[[region]] <- character(0)
+    }
+  }
+  
+  return(region_subregions)
+}
+
+
+get_num_regions_and_subregions <- function(locality) {
+  if (is.na(locality)) {
+    return(0)
+  }
+  
+  locality <- get_region_subregions(locality)
+  
+  # number of regions + number of all subregions
+  return(length(locality) + sum(unlist(lapply(locality, length))))
+}
+
+
+get_locality_tp <- function(pred, recorded) {
+  if (is.na(pred) | is.na(recorded)) {
+    return(0)
+  }
+  
+  pred <- get_region_subregions(pred)
+  recorded <- get_region_subregions(recorded)
+  
+  tp <- 0
+  for (region in names(recorded)) {
+    # true positive if recorded region among predicted regions
+    tp <- tp + (region %in% names(pred))
+    
+    for (subregion in recorded[[region]]) {
+      # true positive subregion if any of the predicted subregions for this
+      # region are a substring of the recorded subregion
+      if (!is.null(pred[[region]])) {
+        tp <- tp + any(str_detect(subregion, pred[[region]]))
+      }
+    }
+  }
+  
+  return(tp)
+}
+
+
+get_locality_fp <- function(pred, recorded) {
+  if (is.na(pred)) {
+    return(0)
+  } else if (is.na(recorded)) {
+    # if no recorded localities, then all predicted regions and subregions are
+    # false pos
+    return(get_num_regions_and_subregions(pred))
+  }
+  
+  pred <- get_region_subregions(pred)
+  recorded <- get_region_subregions(recorded)
+  
+  fp <- 0
+  for (region in names(pred)) {
+    if (!(region %in% names(recorded))) {
+      # predicted region was not a recorded region, so count as false pos
+      fp <- fp + 1
+      
+      # because predicted region is incorrect, all predicted subregions are
+      # also false pos
+      fp <- fp + length(pred[[region]])
+      
+    } else {
+      # check if predicted subregions are correct for this correctly predicted
+      # region
+      for (subregion in pred[[region]]) {
+        fp <- fp + !any(sapply(recorded[[region]],
+                               function(x) {str_detect(x, subregion)}))
+      }
+    }
+  }
+  
+  return(fp)
+}
+
+
+get_locality_fn <- function(pred, recorded) {
+  if (is.na(pred)) {
+    # if no predicted regions/subregions, then num false pos is all recorded
+    # regions and subregions
+    return(get_num_regions_and_subregions(recorded))
+  } else if (is.na(recorded)) {
+    return(0)
+  }
+  
+  pred <- get_region_subregions(pred)
+  recorded <- get_region_subregions(recorded)
+  
+  fn <- 0
+  for (region in names(recorded)) {
+    if (!(region %in% names(pred))) {
+      # region wasn't in predictions, so count as false negative
+      # all associated subregions are also false negatives
+      fn <- fn + 1
+      fn <- fn + length(recorded[[region]])
+      
+    } else {
+      for (subregion in recorded[[region]]) {
+        if (!(subregion %in% pred[[region]])) {
+          # none of the predicted subregions for this region are a substring
+          # of the recorded subregion, so count as false neg
+          fn <- fn + !any(str_detect(subregion, pred[[region]]))
+        }
+      }
+    }
+  }
+  
+  return(fn)
+}
+
+
+check_if_regions_in_abstract <- function(title_abstract, locality) {
+  if (is.na(locality)) {
+    return(FALSE)
+  }
+  
+  locality <- str_split(locality, '; ')[[1]]
+  regions <- sapply(locality, function(x) {str_extract(x, '.+(?= \\()')[[1]]})
+  
+  return(any(str_detect(title_abstract, regions)))
+}
+
+
+microsp_locality_preds <- read_csv('../../results/microsp_locality_predictions.csv') %>%
+  # manual fix for correctly associating Siberia with Russia
+  mutate(locality_normalized = ifelse(locality_normalized == 'Siberia ()',
+                                      'Russia (Siberia)',
+                                      locality_normalized),
+         locality_normalized = ifelse(locality_normalized == 'Western Siberia (Novosibirsk)',
+                                      'Russia (Novosibirsk, Western Siberia)',
+                                      locality_normalized),
+         locality_normalized = ifelse(locality_normalized == '(pond (Tom River, Tomsk, Western Siberia)',
+                                      'Russia (Tom River, Tomsk, Western Siberia)',
+                                      locality_normalized),
+         locality_normalized = ifelse(locality_normalized == '(pond (Krotovo Lake, Troitskoe, Novosibirsk, Western Siberia)',
+                                      'Russia (Krotovo Lake, Troitskoe, Novosibirsk region, Western Siberia)',
+                                      locality_normalized)) %>%
+  rowwise() %>%
+  mutate(tp = get_locality_tp(pred_locality, locality_normalized),
+         fp = get_locality_fp(pred_locality, locality_normalized),
+         fn = get_locality_fn(pred_locality, locality_normalized)) %>%
+  mutate(regions_in_abstract = check_if_regions_in_abstract(title_abstract, locality_normalized))
+
+# 18% precision, 45% recall
+# if excluding cases where regions not in abstract, 24% precision and 77% recall
+locality_precision <-
+  sum(microsp_locality_preds$tp) / (sum(microsp_locality_preds$tp) + sum(microsp_locality_preds$fp))
+
+locality_recall <-
+  sum(microsp_locality_preds$tp) / (sum(microsp_locality_preds$tp) + sum(microsp_locality_preds$fn))
