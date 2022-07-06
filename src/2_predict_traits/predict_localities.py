@@ -3,7 +3,7 @@
 # Predict microsporidia localities from paper titles + abstracts: V2
 #
 # Jason Jiang - Created: 2022/05/25
-#               Last edited: 2022/06/15
+#               Last edited: 2022/07/06
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -15,17 +15,16 @@ import spacy
 import geocoder
 import pickle
 from os.path import exists
-from typing import Dict, List, Optional
+from typing import Dict, List, Tuple, Optional
 import pandas as pd
 import re
 from pathlib import Path
-import time
 
 ################################################################################
 
 ## Initialize language models
-geotext = GeoText()
 nlp = spacy.load('en_core_web_md')
+geotext = GeoText()
 
 ################################################################################
 
@@ -42,86 +41,6 @@ else:
 USERNAME = 'jiangjas'  # fill in your own geonames username here
 
 ################################################################################
-
-def get_flashgeotext_preds(txt: str) -> Dict[str, dict]:
-    """Return flashgeotext predictions for countries and cities from a text.
-
-    Rename the 'countries' and 'cities' keys to 'regions' and 'subregions', to
-    allow for broader geographical locations
-    (ex: region = ocean, subregion = landmark in ocean)
-
-    Input:
-        txt: text to predict localities from.
-    
-    Return:
-        Dictionary of countries and cities, as returned by GeoText.extract.
-        Empty dictionary if no predictions from flashgeotext.
-    """
-    geo_preds = geotext.extract(input_text=txt)
-
-    # rename countries to regions, and cities to subregions
-    # region = country or any independent location that can't be assigned to
-    # a country (ex: Pacific Ocean)
-    # subregion = anything within a region, like cities or other landmarks
-    geo_preds['regions'] = geo_preds.pop('countries')
-    geo_preds['subregions'] = geo_preds.pop('cities')
-
-    # assign subregions to each region later
-    # also remove 'span_info' and 'count' key for each region, as we won't use it
-    for region in geo_preds['regions']:
-        geo_preds['regions'][region]['subregions'] = []
-        geo_preds['regions'][region].pop('span_info')
-        geo_preds['regions'][region].pop('count')
-
-    # also remove 'span_info' and 'count' keys from subregions
-    for subregion in geo_preds['subregions']:
-        geo_preds['subregions'][subregion].pop('span_info')
-        geo_preds['subregions'][subregion].pop('count')
-
-    return geo_preds
-
-
-def get_spacy_preds(txt: str, geo_preds: Dict[str, dict]) -> List[spacy.tokens.span.Span]:
-    """Return a list of spans corresponding to spaCy locality entities that weren't
-    predicted by flashgeotext.
-
-    Input:
-        txt: text to predict localities from.
-        geo_preds: flashgeotext localitity predictions for txt, from
-                   get_flashgeotext_preds.
-    
-    Output:
-        List of spans corresponding to spaCy predicted locality entities that
-        weren't picked up by flashgeotext.
-        Empty list if no spaCy predictions or all predictions accounted for by
-        flashgeotext.
-    """
-    # get spaCy locality predictions for txt
-    spacy_preds = \
-        [ent for ent in nlp(txt).ents if ent.label_ in SPACY_LOCALITIES]
-
-    # Set spaCy predictions that have been found by geotext to None
-    for i in range(len(spacy_preds)):
-        found = False
-
-        # check for spacy prediction in geotext regions, then subregions
-        for region in geo_preds['regions']:
-            if spacy_preds[i].text in geo_preds['regions'][region]['found_as'] + [region]:
-                spacy_preds[i] = None
-                found = True
-                break
-
-        if found:  # move on to next spacy pred if found in regions
-            continue
-
-        for subregion in geo_preds['subregions']:
-            if spacy_preds[i].text in geo_preds['subregions'][subregion]['found_as'] + [subregion]:
-                spacy_preds[i] = None
-                break
-
-    # remove Nones from spacy_preds and return it
-    return(list(filter(None, spacy_preds)))
-
 
 def remove_leading_determinant(span: spacy.tokens.span.Span) -> str:
     """Remove leading determinant from a spacy span for a location entity, and
@@ -141,78 +60,130 @@ def remove_leading_determinant(span: spacy.tokens.span.Span) -> str:
     return span.text
 
 
+def get_spacy_preds(txt: str) -> List[spacy.tokens.span.Span]:
+    """Return a list of spans corresponding to geographical location entities
+    predicted by spaCy from a text.
+
+    Input:
+        txt: text to predict localities from.
+    
+    Output:
+        List of spans corresponding to unique spaCy predicted locality entities
+        Empty list if no spaCy predictions
+    """
+    # get spaCy locality predictions for txt
+    spacy_preds = \
+        [ent for ent in nlp(txt).ents if ent.label_ in SPACY_LOCALITIES]
+
+    # keep only unique spaCy locality predictions
+    loc_names = []
+    for pred in spacy_preds:
+        # remove leading determinant (ex: the Ocean of Weddel, remove 'the'),
+        # in case the location is mentioned both with and without the determinant
+        # in the text
+        if remove_leading_determinant(pred) in loc_names:
+            spacy_preds.remove(pred)
+        else:
+            loc_names.append(remove_leading_determinant(pred))
+    
+    return spacy_preds
+
+
 def get_most_likely_region(geonames_result, geo_preds_regions) -> Optional[str]:
-    """Docstring goes here.
+    """Using the top 50 geonames results for a location and a list of countries
+    already identified by flashgeotext, get the most likely region/country of
+    origin for this location.
+
+    If no geonames search results, return None
     """
     if not geonames_result:
-        return None
+        return None, None
 
-    likely_regions = [res.country for res in geonames_result if res.country \
-        in geo_preds_regions]
+    # likely regions are regions that have already been identified by flashgeotext
+    # as countries in the text, and have also been identified by geonames as
+    # potential countries for this location
+    likely_regions = [(res.country, res.address) for res in geonames_result if \
+        res.country in geo_preds_regions]
 
-    top_region_hit = geonames_result[0].country
+    top_region_hit = geonames_result[0]
+
+    if not likely_regions:
+        # countries detected by flashgeotext in text doesn't correspond to top
+        # result found by geonames, so just return the top result
+        return top_region_hit.country, top_region_hit.address
     
-    if top_region_hit in likely_regions or not likely_regions:
-        # if top region from geonames for this locality was also found previously
-        # in text, or no regions found by flashgeotext could be identified as
-        # region for this subregion, return the top region result from geonames
-        return top_region_hit
+    elif any([top_region_hit.country == x[0] for x in likely_regions]):
+        normalized_location_name = [x for x in likely_regions if x[0] == top_region_hit.country]
+        return top_region_hit.country, normalized_location_name
+
     else:
         # top hit wasn't part of geonames predictions, so return the first
         # flashgeotext predicted region that was also found in search results
-        return likely_regions[0]
-    
+        return likely_regions[0][0], likely_regions[0][1]
 
-def assign_to_region_or_subregion(locations: List[str], geo_preds,
-                                  found_as: List[List[str]]) -> None:
-    """For a list of locations, check if it is a region or subregion of some
-    other region, and update geo_preds dictionary accordingly.
 
-    Input:
-        locations: List of strings for localities of undetermined region/subregion
-        geo_preds: dictionary of flashgeotext locality predictions from a text,
-                   generated by get_flashgeo_preds
-    
-    Return:
-        None, mutates geo_preds in-place
+def set_as_region_or_subregion(loc: str, regions: dict) -> None:
+    """Assign a location (loc) as a subregion or a region using geonames.
     """
-    for i in range(len(locations)):
-        loc = locations[i]
-        if not loc in GEONAMES_CACHE:
-            geonames_result = geocoder.geonames(loc, key=USERNAME, maxRows=50)
+    region_names = list(regions.keys())
 
-            # store geonames search result in cache for future access
-            GEONAMES_CACHE[loc] = geonames_result
+    if not loc in GEONAMES_CACHE:
+        # this particular location not looked up in geonames yet, get top 50
+        # search results and store in cache
+        geonames_result = geocoder.geonames(loc, key=USERNAME, maxRows=50)
+        GEONAMES_CACHE[loc] = geonames_result
+    else:
+        # fetch cached results
+        geonames_result = GEONAMES_CACHE[loc]
+
+    most_likely_region, normalized_location_name = \
+        get_most_likely_region(geonames_result, region_names)
+    
+    if not most_likely_region:
+        # treat location as a region, if no results from geonames
+        regions[loc] = {'subregions': [], 'found_as': [loc]}
+    else:
+        # assign location as a subregion to the most likely region
+        if most_likely_region in regions:
+            regions[most_likely_region]['subregions'][]
+
+
+def get_regions_and_subregions(spacy_preds: List[spacy.tokens.span.Span]) -> \
+    Dict[str, dict]:
+    """For a list of spaCy entities corresponding to probable geographic
+    locations, assign them to their likely origin regions or set them as
+    their own region.
+    
+    Return a dictionary with keys as region names, and values as dictionaries
+    of subregions for each region and a list of aliased names to this region.
+    """
+    regions = {}
+    undetermined = []
+
+    for pred in spacy_preds:
+        geotext_pred = geotext.extract(pred.text)
+
+        if pred['countries']:
+            # geotext predicted this location as a country, so add it as
+            # a region using the geotext normalized name as the region
+            # key name in the dictionary
+            regions[list(pred['countries'].keys())[0]] = \
+                {'subregions': [], 'found_as': [pred.text]}
+
         else:
-            # fetch cached geonames search result for location
-            geonames_result = GEONAMES_CACHE[loc]
+            # for locations tagged as cities or not recognized at all by
+            # flashgeotext, add these to 'undetermined' so we can link
+            # them back to their respective regions or set them as
+            # their own regions
+            undetermined.append(pred.text)
 
-        loc_region = get_most_likely_region(geonames_result,
-                                            list(geo_preds['regions'].keys()))
+    # start assigning cities back to their regions/countries, and either
+    # assign undetermined locations to their respective regions, or denote
+    # them as their own regions
+    for loc in undetermined:
+        set_as_region_or_subregion(loc, regions)
 
-        if not loc_region:  # no origin country for location, treat as a region
-            geo_preds['regions'][loc] = {'found_as': found_as[i], 'subregions': []}
-        else:  # assign location to origin country as its region
-            if loc_region not in geo_preds['regions']:
-                # origin country of location from geonames not yet in geo_preds
-                geo_preds['regions'][loc_region] = {'found_as': [loc_region],
-                                                     'subregions': [found_as[i]]}
-            else:
-                if found_as[i] not in geo_preds['regions'][loc_region]['subregions']:
-                    geo_preds['regions'][loc_region]['subregions'].append(found_as[i])
-
-
-def format_locality_string(locality_preds: Dict[str, Dict[str, list]]) -> str:
-    """Format dictionary of region predictions + their subregions as a string,
-    in the form of 'Region 1 (subregion A | subregion B); Region 2 (...); ...'
-    """
-    loc_strs = []
-    for region in locality_preds:
-        loc_strs.append(
-            region + ' (' + ' | '.join([s[0] for s in locality_preds[region]['subregions']]) + ')'
-        )
-
-    return '; '.join(loc_strs)
+    return regions
 
 
 def predict_localities(txt: str) ->  Dict[str, dict]:
@@ -226,25 +197,18 @@ def predict_localities(txt: str) ->  Dict[str, dict]:
         Dictionary of region names, with same keys as geotext['countries']
         + additional subregions key
     """
-    # get flashgeotext predictions for countries and cities
-    geo_preds = get_flashgeotext_preds(txt)
+    # get spaCy entities from text that correspond to geographical locations
+    spacy_preds = get_spacy_preds(txt)
 
-    # get spaCy locality predictions that weren't predicted by flashgeotext
-    spacy_preds = get_spacy_preds(txt, geo_preds)
+    # remove any location predictions that are actually just taxonomic names,
+    # as those tend to get tagged as location entities by spacy
+    spacy_preds = remove_taxonomic_entities(spacy_preds)
 
-    # update geo_preds with spaCy predictions, adding regions and subregions
-    # to regions as appropriate
-    # also remove redundant spacy entities
-    tmp = list(set([remove_leading_determinant(pred) for pred in spacy_preds]))
-    assign_to_region_or_subregion(tmp, geo_preds, [[t] for t in tmp])
+    # return the predicted locations as a dictionary of regions and their
+    # subregions (ex: region = Australia, subregions = [Melbourne, Sydney])
+    return get_regions_and_subregions(spacy_preds)
 
-    # update geo_preds with subregions from itself, adding the subregions to
-    # its corresponding regions as appropriate
-    assign_to_region_or_subregion(list(geo_preds['subregions'].keys()), geo_preds,
-                                       [geo_preds['subregions'][sub]['found_as'] for sub in geo_preds['subregions']])
-
-    return geo_preds['regions'], format_locality_string(geo_preds['regions'])  # use format locality_string later
-
+################################################################################
 
 def get_locality_dict(locs: str) -> Dict[str, List[str]]:
     """Converted recorded localities into dictionary, with regions as keys and
@@ -359,8 +323,6 @@ def normalize_recorded_localities(locs: str) -> dict:
         locs[region_normalized] = locs.pop(region)
 
     return locs, get_locs_str(locs)
-
-normalize_recorded_localities('Siberia')
 
 ################################################################################
 
