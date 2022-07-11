@@ -89,7 +89,22 @@ def get_spacy_preds(txt: str) -> List[spacy.tokens.span.Span]:
     return spacy_preds
 
 
-def get_most_likely_region(geonames_result, geo_preds_regions) -> Optional[str]:
+def get_top_region_hit(location: str, geonames_result):
+    """Top region hit from geonames search result is result with exact
+    match to location in question, or the first search result if no
+    exact name matches.
+    """
+    exact_matches = [res for res in geonames_result if \
+        res.address.lower() == location.lower()]
+
+    if exact_matches:
+        return exact_matches[0]
+    
+    return geonames_result[0]
+
+
+def get_most_likely_region(location, geonames_result, geo_preds_regions) -> \
+    Optional[Tuple[str, str, bool]]:
     """Using the top 50 geonames results for a location and a list of countries
     already identified by flashgeotext, get the most likely region/country of
     origin for this location.
@@ -97,29 +112,33 @@ def get_most_likely_region(geonames_result, geo_preds_regions) -> Optional[str]:
     If no geonames search results, return None
     """
     if not geonames_result:
-        return None, None
+        return None
 
     # likely regions are regions that have already been identified by flashgeotext
     # as countries in the text, and have also been identified by geonames as
     # potential countries for this location
-    likely_regions = [(res.country, res.address) for res in geonames_result if \
-        res.country in geo_preds_regions]
+    #
+    # sort likely regions with i, so we can pick the first geonames
+    # result that overlaps with flashgeotext predicted regions
+    likely_regions = [(res.country, res.address, i) for res, i in \
+        enumerate(geonames_result) if res.country in geo_preds_regions].sort(key = lambda x: x[2])
 
-    top_region_hit = geonames_result[0]
+    top_region_hit = get_top_region_hit(location, geonames_result)
 
     if not likely_regions:
         # countries detected by flashgeotext in text doesn't correspond to top
-        # result found by geonames, so just return the top result
+        # result found by geonames, so just return the country + normalized
+        # name of the top result
+        if not top_region_hit.country:
+            # no country, so treat location as a region
+            return top_region_hit.address, top_region_hit.address
+        
         return top_region_hit.country, top_region_hit.address
     
-    elif any([top_region_hit.country == x[0] for x in likely_regions]):
-        normalized_location_name = [x for x in likely_regions if x[0] == top_region_hit.country]
-        return top_region_hit.country, normalized_location_name
-
     else:
-        # top hit wasn't part of geonames predictions, so return the first
-        # flashgeotext predicted region that was also found in search results
-        return likely_regions[0][0], likely_regions[0][1]
+        # return first search result overlapping with regions predicted
+        # by flashgeotext
+        return likely_regions[0][0], likely_regions[0][1] 
 
 
 def set_as_region_or_subregion(loc: str, regions: dict) -> None:
@@ -137,15 +156,25 @@ def set_as_region_or_subregion(loc: str, regions: dict) -> None:
         geonames_result = GEONAMES_CACHE[loc]
 
     most_likely_region, normalized_location_name = \
-        get_most_likely_region(geonames_result, region_names)
+        get_most_likely_region(loc, geonames_result, region_names)
     
     if not most_likely_region:
         # treat location as a region, if no results from geonames
-        regions[loc] = {'subregions': [], 'found_as': [loc]}
+        regions[loc] = {'subregions': {}, 'found_as': [loc]}
+    elif most_likely_region == normalized_location_name:
+        # if normalized location name is same as most likely region, then
+        # location was a region itself according to geonames
+        regions[most_likely_region] = {'subregions': {}, 'found_as': [loc]}
     else:
         # assign location as a subregion to the most likely region
         if most_likely_region in regions:
-            regions[most_likely_region]['subregions'][]
+            if normalized_location_name not in regions[most_likely_region]['subregions']:
+                regions[most_likely_region]['subregions'][normalized_location_name] = \
+                    [loc]
+            else:
+                regions[most_likely_region]['subregions'][normalized_location_name].append(loc)
+        else:
+            regions[most_likely_region] = {'subregions': {normalized_location_name: [loc]}, 'found_as': [most_likely_region]}
 
 
 def get_regions_and_subregions(spacy_preds: List[spacy.tokens.span.Span]) -> \
@@ -163,12 +192,12 @@ def get_regions_and_subregions(spacy_preds: List[spacy.tokens.span.Span]) -> \
     for pred in spacy_preds:
         geotext_pred = geotext.extract(pred.text)
 
-        if pred['countries']:
+        if geotext_pred['countries']:
             # geotext predicted this location as a country, so add it as
             # a region using the geotext normalized name as the region
             # key name in the dictionary
-            regions[list(pred['countries'].keys())[0]] = \
-                {'subregions': [], 'found_as': [pred.text]}
+            regions[list(geotext_pred['countries'].keys())[0]] = \
+                {'subregions': {}, 'found_as': [pred.text]}
 
         else:
             # for locations tagged as cities or not recognized at all by
@@ -194,15 +223,14 @@ def predict_localities(txt: str) ->  Dict[str, dict]:
         txt: text to predict localities from
 
     Return:
-        Dictionary of region names, with same keys as geotext['countries']
-        + additional subregions key
+        Dictionary with keys as regions and values as subregions
     """
     # get spaCy entities from text that correspond to geographical locations
     spacy_preds = get_spacy_preds(txt)
 
     # remove any location predictions that are actually just taxonomic names,
     # as those tend to get tagged as location entities by spacy
-    spacy_preds = remove_taxonomic_entities(spacy_preds)
+    # spacy_preds = remove_taxonomic_entities(spacy_preds)
 
     # return the predicted locations as a dictionary of regions and their
     # subregions (ex: region = Australia, subregions = [Melbourne, Sydney])
