@@ -3,7 +3,7 @@
 # Predict microsporidia spore nucleus counts
 #
 # Jason Jiang - Created: 2022/07/12
-#               Last edited: 2022/07/12
+#               Last edited: 2022/07/13
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -39,7 +39,8 @@ nucleus_count = {'nucleus': 1, 'nuclei': 2, 'unikaryotic': 1, 'unikariotic': 1,
                  'uninucleate': 1, 'mononucleate': 1, 'binucleate': 2, 'uninuclear': 1,
                  'binuclear': 2}
 
-immature_spore_terms = ('sporoblast', 'sporont', 'meront', 'schizont')
+immature_spore_terms = ('sporoblast', 'sporont', 'meront', 'schizont', 'plasmodia',
+                        'merozoite')
 
 # matcher for nucleus data terms
 nucleus_matcher = PhraseMatcher(nlp.vocab, attr='LOWER')
@@ -66,9 +67,8 @@ def main() -> None:
     writes the resulting dataframe as a csv to the results folder.
     """
     microsp_data = pd.read_csv('../../data/manually_format_multi_species_papers.csv')
-    microsp_data['pred_nucleus'] = microsp_data.assign(
-        lambda df: predict_spore_nucleus(df.title_abstract),
-        axis=1
+    microsp_data = microsp_data.assign(
+        pred_nucleus = lambda df: predict_spore_nucleus(df.title_abstract)
     )
 
     microsp_data.to_csv(Path('../../results/microsp_spore_nuclei_predictions.csv'))
@@ -106,12 +106,20 @@ def predict_spore_nucleus(txt: str) -> str:
             if spore_name == 'spore':
                 spore_name = 'normal spore'
         
-        nucleus_term = doc[nucleus_matcher(sent)[0][1]].text.lower()
+        nucleus_match = nucleus_matcher(sent)[0][1]
+        nucleus_term = doc[nucleus_match].text.lower()
+
+        if nucleus_match - 1 > 0 and \
+            doc[nucleus_match - 1].text == 'isolated':
+            continue
+
         num_nuclei = str(nucleus_count[nucleus_term])
 
         spore_nucleus_info.append((spore_name, num_nuclei))
 
-    return '; '.join([f"{num} ({name})" for name, num in spore_nucleus_info])
+    return '; '.join(
+        list(set([f"{num} ({name})" for name, num in spore_nucleus_info]))
+        )
 
 ################################################################################
 
