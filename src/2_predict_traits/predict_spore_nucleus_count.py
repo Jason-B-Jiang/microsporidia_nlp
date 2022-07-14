@@ -16,6 +16,26 @@ from pathlib import Path
 
 ################################################################################
 
+## Cache texts as we process them with spaCy, to speed up code (potentially)
+CACHED_TEXT = {}
+
+def get_cached_text(txt: str) -> spacy.tokens.doc.Doc:
+    """Retrieve cached results for some string, txt, already processed by
+    either the bionlp13cg_md or en_core_sci_lg spaCy model.
+
+    Inputs:
+        txt: string to retrieve cached spaCy results for
+
+        spacy_large: bool indicating if we want results from en_core_sci_lg
+        model. If False, then get cached results from bionlp13cg_md model
+    """
+    if not txt in CACHED_TEXT:
+        CACHED_TEXT[txt] = nlp(txt)
+    
+    return CACHED_TEXT[txt]
+
+################################################################################
+
 ## Global variables
 
 nlp = spacy.load('en_core_web_md')
@@ -40,7 +60,7 @@ nucleus_count = {'nucleus': 1, 'nuclei': 2, 'unikaryotic': 1, 'unikariotic': 1,
                  'binuclear': 2}
 
 immature_spore_terms = ('sporoblast', 'sporont', 'meront', 'schizont', 'plasmodia',
-                        'merozoite')
+                        'merozoite', 'merogonial', '')
 
 # matcher for nucleus data terms
 nucleus_matcher = PhraseMatcher(nlp.vocab, attr='LOWER')
@@ -67,15 +87,23 @@ def main() -> None:
     writes the resulting dataframe as a csv to the results folder.
     """
     microsp_data = pd.read_csv('../../data/manually_format_multi_species_papers.csv')
+
     microsp_data = microsp_data.assign(
         pred_nucleus = lambda df: df['title_abstract'].map(
             lambda txt: predict_spore_nucleus(txt),
             na_action='ignore'
         )
     )
+    microsp_data = microsp_data.assign(
+        nucleus_data_in_text = lambda df: df['title_abstract'].map(
+            lambda txt: check_if_nucleus_data_in_text(txt),
+            na_action='ignore'
+        )
+    )
 
     microsp_data[
-        ['species', 'title_abstract', 'pred_nucleus', 'nucleus']
+        ['species', 'num_papers', 'title_abstract', 'pred_nucleus', 'nucleus',
+        'nucleus_data_in_text']
         ].to_csv(Path('../../results/microsp_spore_nuclei_predictions.csv'))
 
 ################################################################################
@@ -90,7 +118,7 @@ def predict_spore_nucleus(txt: str) -> str:
     Input:
         txt: abstract or full-text for a Microsporidia species paper.
     """
-    doc = nlp(txt)
+    doc = get_cached_text(txt)
     nucleus_sents = [sent for sent in doc.sents if nucleus_matcher(sent) and \
         not immature_spore_matcher(sent)]
 
@@ -125,6 +153,19 @@ def predict_spore_nucleus(txt: str) -> str:
     return '; '.join(
         list(set([f"{num} ({name})" for name, num in spore_nucleus_info]))
         )
+
+
+def check_if_nucleus_data_in_text(txt: str) -> bool:
+    """Return True if there are any sentences in the text with nucleus data.
+    
+    Input:
+        txt: title + abstract or full text for a Microsporidia paper
+    """
+    doc = get_cached_text(txt)
+    nucleus_sents = [sent for sent in doc.sents if nucleus_matcher(sent) and \
+        not immature_spore_matcher(sent)]
+
+    return len(nucleus_sents) > 0
 
 ################################################################################
 
