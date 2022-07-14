@@ -68,10 +68,15 @@ def main() -> None:
     """
     microsp_data = pd.read_csv('../../data/manually_format_multi_species_papers.csv')
     microsp_data = microsp_data.assign(
-        pred_nucleus = lambda df: predict_spore_nucleus(df.title_abstract)
+        pred_nucleus = lambda df: df['title_abstract'].map(
+            lambda txt: predict_spore_nucleus(txt),
+            na_action='ignore'
+        )
     )
 
-    microsp_data.to_csv(Path('../../results/microsp_spore_nuclei_predictions.csv'))
+    microsp_data[
+        ['species', 'title_abstract', 'pred_nucleus', 'nucleus']
+        ].to_csv(Path('../../results/microsp_spore_nuclei_predictions.csv'))
 
 ################################################################################
 

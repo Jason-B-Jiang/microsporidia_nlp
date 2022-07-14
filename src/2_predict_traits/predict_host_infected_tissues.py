@@ -3,7 +3,7 @@
 # Predict microsporidia sites of infection in hosts
 #
 # Jason Jiang - Created: 2022/06/02
-#               Last edited: 2022/07/13
+#               Last edited: 2022/07/14
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -22,31 +22,25 @@ from pathlib import Path
 
 ## Model initialization
 
-# Use scispaCy en_ner_bionlp13cg_md NER model, as this has been trained to tag
-# organs, tissues, etc
-nlp_bio = spacy.load("en_ner_bionlp13cg_md")
-
 # Alternatively: use large model to tag all entities, then link to UMLS
-nlp_large = spacy.load("en_core_sci_lg")  # use large model for optimal entity tagging
+nlp = spacy.load("en_core_sci_lg")  # use large model for optimal entity tagging
 
 # Add entity linking from the Unified Medical Language System, for getting
 # normalizing tissue/organ/etc names w/ canonical UMLS names
 #
 # Only add entity linking for the en_core_sci_lg pipeline, due to memory
 # constraints
-nlp_large.add_pipe("scispacy_linker",
-                   config={"resolve_abbreviations": True, "linker_name": "umls"})
+nlp.add_pipe("scispacy_linker",
+             config={"resolve_abbreviations": True, "linker_name": "umls"})
 
-linker_large = nlp_large.get_pipe("scispacy_linker")
+linker = nlp.get_pipe("scispacy_linker")
 
 ################################################################################
 
-## Cache texts as we process them with spaCy, to speed up code
-## Create a separate cache for each spaCy model
-CACHED_TEXT_BIO = {}  # bionlp13cg_md
-CACHED_TEXT_LARGE = {}  # en_core_sci_lg
+## Cache texts as we process them with spaCy, to speed up code (potentially)
+CACHED_TEXT = {}
 
-def get_cached_text(txt: str, spacy_large: bool = False) -> spacy.tokens.doc.Doc:
+def get_cached_text(txt: str) -> spacy.tokens.doc.Doc:
     """Retrieve cached results for some string, txt, already processed by
     either the bionlp13cg_md or en_core_sci_lg spaCy model.
 
@@ -56,16 +50,10 @@ def get_cached_text(txt: str, spacy_large: bool = False) -> spacy.tokens.doc.Doc
         spacy_large: bool indicating if we want results from en_core_sci_lg
         model. If False, then get cached results from bionlp13cg_md model
     """
-    if spacy_large:
-        if txt not in CACHED_TEXT_LARGE:
-            CACHED_TEXT_LARGE[txt] = nlp_large(txt)
-        
-        return CACHED_TEXT_LARGE[txt]
+    if not txt in CACHED_TEXT:
+        CACHED_TEXT[txt] = nlp(txt)
     
-    if not txt in CACHED_TEXT_BIO:
-        CACHED_TEXT_BIO[txt] = nlp_bio(txt)
-
-    return CACHED_TEXT_BIO[txt]
+    return CACHED_TEXT[txt]
 
 ################################################################################
 
@@ -88,13 +76,9 @@ IRRELEVANT_PARENTHESIZED_INFO =\
 # Parenthesized information following recorded infection sites that IS informative,
 # as it tells us more information about where the Microsporidia infects, so keep
 # this info
-EXCLUSIONS = ['in lamina propria through muscularis mucosae into submucosa of small intestine tract',
-              'mainly in duodenum']
-
-# Named entities from en_ner_bionlp13cg_md (nlp_large) that likely correspond to
-# Microsporidia infection sites in texts
-INFECTION_SITE_ENTITIES = ['ORGAN', 'TISSUE', 'ORGANISM_SUBDIVISION', \
-    'MULTI_TISSUE_STRUCTURE', 'CELL', 'CELLULAR_COMPONENT']
+EXCLUSIONS = \
+    ['in lamina propria through muscularis mucosae into submucosa of small intestine tract',
+    'mainly in duodenum']
 
 
 def get_abbrev_species_name(host: str) -> str:
@@ -126,8 +110,12 @@ def get_host_names_and_abbrevs(hosts_natural, hosts_experimental) -> List[str]:
         hosts_experimental: semi-colon separated string of experimental
         infection hosts
     """
-    hosts_natural = [h.split('(')[0].strip() for h in hosts_natural.split('; ')]
-    hosts_experimental = [h.split('(')[0].strip() for h in hosts_experimental.split('; ')]
+    hosts_natural = [h.split('(')[0].strip() for h in \
+        hosts_natural.split('; ')]
+
+    hosts_experimental = [h.split('(')[0].strip() for h \
+        in hosts_experimental.split('; ')]
+
     all_hosts = hosts_natural + hosts_experimental
     all_hosts.extend([get_abbrev_species_name(h) for h in all_hosts])
 
@@ -150,7 +138,8 @@ def should_remove_subsite(subsite: str, all_host_names: List[str]) -> bool:
         a Microsporidia species, to sus out subsite info that corresponds to
         taxonomic names (and should be removed)
     """
-    return any([term in subsite for term in IRRELEVANT_PARENTHESIZED_INFO + all_host_names]) and \
+    return any([term in subsite for term in \
+        IRRELEVANT_PARENTHESIZED_INFO + all_host_names]) and \
         not any([term in subsite for term in EXCLUSIONS])
 
 
@@ -192,12 +181,14 @@ def clean_recorded_infection_sites(sites: str, hosts_natural: str,
         if '(' in site:
             # subsites are recorded for site, indicated by parenthesized text
             subsites = \
-                [s.strip().strip(')') for s in re.search("(?<=\().+\)?", site).group(0).split(',')]
+                [s.strip().strip(')') for s in \
+                    re.search("(?<=\().+\)?", site).group(0).split(',')]
         else:
             subsites = []
         
         # only keep informative subsites for each infection site
-        subsites = [s for s in subsites if not should_remove_subsite(s, all_host_names)]
+        subsites = [s for s in subsites if not \
+            should_remove_subsite(s, all_host_names)]
         
         # add sites + subsites together into one list
         sites_formatted.append(site.split('(')[0].strip())
@@ -213,11 +204,12 @@ def clean_recorded_infection_sites(sites: str, hosts_natural: str,
 
 # Base words in a sentence indicates it has info about Microsporidia infection
 # sites
-INFECTION_LEMMAS = ['find', 'parasitize', 'infect', 'describe', 'localize', 'invade',
-                    'appear', 'parasite']
-infection_pattern = [{'POS': 'VERB', 'LEMMA': {'IN': INFECTION_LEMMAS}}]
-matcher = Matcher(nlp_large.vocab)
-matcher.add('infection_site', [infection_pattern])
+INFECTION_LEMMAS = ['find', 'parasitize', 'infect', 'infeet', 'describe',
+                    'localize', 'invade', 'appear', 'parasite']
+
+infection_matcher = Matcher(nlp.vocab)
+infection_matcher.add('infection_site',
+                      [[{'POS': 'VERB', 'LEMMA': {'IN': INFECTION_LEMMAS}}]])
 
 # Words that correspond to Microsporidia anatomy, and not host infection sites,
 # and so shouldn't be part of predicted infection sites of a Microsporidia species
@@ -228,6 +220,10 @@ MICROSPORIDIA_PARTS = ['polar tube', 'polar filament', 'sporoblast', 'spore'
                        'posterior vacuole', 'sporoblasts', 'meiospores', 'meiospore',
                        'macrospore', 'macrospores', 'microspore', 'microspores',
                        'basal', 'spores', 'schizogony', 'sporogony']
+
+# IDs of UMLS entries that we are interested in
+RELEVANT_UMLS_TYPES = ('T017', 'T018', 'T022', 'T023', 'T024', 'T025', 'T029',
+                       'T030', 'T031')
 
 
 def is_overlapping_spans(s1: spacy.tokens.span.Span, s2: spacy.tokens.span.Span) -> \
@@ -254,7 +250,7 @@ def get_overlapping_entity(site: spacy.tokens.span.Span, \
         if is_overlapping_spans(ent, site):
             return ent
     
-    return site  # return site 'as is' if no overlapping entity found
+    return # return None if no overlapping entity found
 
 
 def get_site_spans(doc: spacy.tokens.doc.Doc) -> List[spacy.tokens.span.Span]:
@@ -280,8 +276,9 @@ def get_site_spans(doc: spacy.tokens.doc.Doc) -> List[spacy.tokens.span.Span]:
     return [doc[:]]  # return doc as a span and 'as is' if no semicolons
 
 
-def get_intersecting_umls_names(recorded_names: List[Tuple[str]], pred_names: List[Tuple[str]]) \
-    -> List[str]:
+def get_intersecting_umls_names(recorded_names: List[Tuple[str]],
+                                pred_names: List[Tuple[str]]) \
+                                    -> List[str]:
     """Docstring goes here
     """
     if not recorded_names:
@@ -291,150 +288,111 @@ def get_intersecting_umls_names(recorded_names: List[Tuple[str]], pred_names: Li
     return [s[0] for s in recorded_names if s[0] in [t[0] for t in pred_names]]
 
 
-def is_unlabelled_by_bionlp13cg(ent: spacy.tokens.span.Span,
-                                bio_infection_sents: List[spacy.tokens.span.Span]) -> bool:
-    """Return True if a particular entity is not a named entity in a set
-    of given sentences from a text processed by en_ner_bionlp13cg_md.
-
-    Inputs:
-        ent: spaCy span for some entity predicted by en_core_sci_lg
-
-        bio_infection_sents: sentences from a text processed by
-        en_ner_bionlp13cg_md, which likely contain Microsporidia
-        infection site data
-    """
-    # use Matcher to find spans in each infection sentence matching ent
-    # check if matching spans overlap with any entities in each sentence
-    # if yes, return False (is labelled by bionlp13cg)
-    # if no spans overlap with any labelled entities, then return True
-    tmp_matcher = Matcher(nlp_large.vocab)
-    tmp_matcher.add('ent', [[{'LOWER': ent.text.lower()}]])
-
-    for sent in bio_infection_sents:
-        matches = tmp_matcher(sent)
-        if matches:
-            # check all matches for overlap with entities in this sentence
-            # if any overlap at all, return False
-            for match in matches:
-                if any([is_overlapping_spans(sent[match[1] : match[2]], ent) for ent in sent.ents]):
-                    return False
-
-    return True
-
-
-def resolve_normalized_names(pred_sites: dict, sites_formatted: str) -> Tuple[str, str]:
-    """Get UMLS normalized names for predicted sites + recorded sites.
-
-    TODO - MODIFY FOR NEW PREDICTION ALGORITHM
-    """
-    # Process recorded infection sites with spaCy, and extract tagged entities
-    doc = get_cached_text(sites_formatted)
-    sites_formatted = get_site_spans(doc)
-    ents_of_interest = [ent for ent in doc.ents if ent.label_ in INFECTION_SITE_ENTITIES]
-
-    # Create dictionary of recorded infection site entities + UMLS normalized names
-    site_names = {}
-    for i in range(len(sites_formatted)):
-        # replace site with predicted entity if it can be associated with a predicted entity
-        sites_formatted[i] = get_overlapping_entity(sites_formatted[i], ents_of_interest)
-
-        site_names[sites_formatted[i]] = {'umls_names': sites_formatted[i]._.kb_ents,
-                                          'needs_normalization': True,
-                                          'canonical_name': sites_formatted[i].text}
-
-        # look up each recorded site in all predicted sites and look for overlaps
-        for pred in pred_sites:
-            if sites_formatted[i].text.lower() in pred.text.lower():
-                # for any predicted sites that have recorded site as a substring, set
-                # its normalized canonical name to the text for the recorded site
-                site_names[sites_formatted[i]]['needs_normalization'] = False
-                pred_sites[pred]['needs_normalization'] = False
-                pred_sites[pred]['canonical_name'] = sites_formatted[i].text
-                continue
-
-            intersecting_umls_names = get_intersecting_umls_names(
-                site_names[sites_formatted[i]]['umls_names'],
-                pred_sites[pred]['umls_names']
-            )
-
-            if intersecting_umls_names:
-                # set first intersecting UMLS normalized name for predicted and
-                # recorded infection site as the normalzied name for both
-                canonical_name = linker_large.kb.cui_to_entity[intersecting_umls_names[0]][1]
-
-                site_names[sites_formatted[i]]['canonical_name'] = canonical_name
-                site_names[sites_formatted[i]]['needs_normalization'] = False
-
-                pred_sites[pred]['canonical_name'] = canonical_name
-                pred_sites[pred]['needs_normalization'] = False
-    
-    # Return Tuple of semi-colon separated strings for normalized recorded and predicted
-    # infection sites
-    return (
-        # normalized recorded sites
-        '; '.join(list(set([site_names[site]['canonical_name'] for site in site_names]))),
-
-        # normalized predicted sites
-        '; '.join(list(set([pred_sites[pred]['canonical_name'] for pred in pred_sites])))
-    )
-
-
-def predict_and_normalize_infection_sites_2(txt, sites_formatted) -> Tuple[str, str]:
+def get_recorded_sites_dict(recorded_infection_sites: str) -> dict:
     """Docstring goes here.
     """
+    doc = nlp(recorded_infection_sites)
+    sites_dict = {}
 
-    ############################################################################
+    # get spans for all recorded infection sites
+    site_spans = get_site_spans(doc)
+    for span in site_spans:
+        if not any([is_overlapping_spans(span, ent) for ent in doc.ents]):
+            # recorded site wasn't detected as entity by scispacy,
+            # so make sure we still include it in sites_dict
+            #
+            # no umls entries, so set normalized name as original text
+            sites_dict[span.text] = {
+                'umls_entries': [],
+                'normalized_name': span.text
+                }
 
-    txt_docs = {'bio': {'doc': get_cached_text(txt)},
-                'large': {'doc': get_cached_text(txt, spacy_large=True)}}
-
-    # Get sentences likely containing Microsporidia infection site data for each
-    # document processed by the two spaCy models
-    txt_docs['bio']['infection_sentences'], txt_docs['large']['infection_sentences'] = \
-        [sent for sent in txt_docs['bio']['doc'].sents if matcher(sent)], \
-            [sent for sent in txt_docs['large']['doc'].sents if matcher(sent)]
-
-    # Detect probable infection entities in "infection sentences" from
-    # en_ner_bionlp13cg_md model
-    txt_docs['bio']['infection_entities'] = []
-    txt_docs['large']['infection_entities'] = []
-
-    for sent in txt_docs['bio']['infection_sentences']:
-        # Extract entities in infection sentences that have tags corresponding
-        # to probable infection sites, and exclude entities that are actually
-        # Microsporidia anatomy parts.
-        txt_docs['bio']['infection_entities'].extend(
-            [ent for ent in sent.ents if ent.label_ in \
-                INFECTION_SITE_ENTITIES and not ent.text.lower() in MICROSPORIDIA_PARTS]
-        )
-
-    # Detect probable infection entities in "infection sentences" for
-    # en_core_sci_lg model
+    # don't need to check if entities in recorded sites are not Microsporidia
+    # parts or if they have valid UMLS entries, as we are confident we recorded
+    # relevant terms as the infection sites
     #
-    # Pick entities meeting the following criteria:
-    # 1) Has UMLS linking, so is probably a biologically relevant term, and
-    # 2) Is also a relevant infection site entity found by bionlp13cg, OR
-    #    has not been tagged as an entity at all by bionlp13cg
-    #
-    # Use these entities as our "final" set of predicted infection sites from
-    # the text
-    for sent in txt_docs['large']['infection_sentences']:
-        txt_docs['large']['infection_entities'].extend(
-            [ent for ent in sent.ents if len(ent._.kb_ents) > 0 and \
-                (any([is_overlapping_spans(ent, bio_ent) for bio_ent in txt_docs['bio']['infection_entities']]) or \
-                    is_unlabelled_by_bionlp13cg(ent, txt_docs['bio']['infection_sentences']))]
-        )
+    # possible "uninformative" entities to exclude:
+    # cell, cells, tissue, tissues (use lemmas for singulars)
+    for ent in doc.ents:
+        sites_dict[ent.text] = {
+            'umls_entries': ent._.kb_ents,
+            'normalized_name': None
+        }
 
-    # sloppy temporary code
-    pred_sites = {}
-    for ent in txt_docs['large']['infection_entities']:
-         pred_sites[ent] = {'umls_names': ent._.kb_ents,
-                            'needs_normalization': True,
-                            'canonical_name': ent.text}
+    return sites_dict
 
-    ############################################################################
 
-    return resolve_normalized_names(pred_sites, sites_formatted)
+def has_valid_umls_entries(ent: spacy.tokens.span.Span) -> bool:
+    """Docstring goes here.
+    """
+    for i in range(len(ent._.kb_ents)):
+        concept_ids = \
+            linker.kb.cui_to_entity[ent._.kb_ents[i][0]].types
+
+        if not any([id in RELEVANT_UMLS_TYPES for id in concept_ids]):
+            ent._.kb_ents[i] = None
+
+    ent._.kb_ents = [ent for ent in ent._.kb_ents if ent is not None \
+        and ent[1] >= 0.8]
+
+    return len(ent._.kb_ents) > 0
+
+
+def resolve_normalized_names(pred_sites: dict, recorded_sites: str) -> \
+    Tuple[str, str]:
+    """Get UMLS normalized names for predicted sites + recorded sites.
+    """
+    # Process recorded infection sites with spaCy, and extract relevant entities
+    recorded_sites = get_recorded_sites_dict(recorded_sites)
+    for site in recorded_sites:
+        if recorded_sites[site]['normalized_name'] is not None:
+            # recorded site was not detected as entity, so skip it
+            continue
+
+        corresponding_site = \
+            get_corresponding_pred_site(recorded_sites[site], pred_sites)
+        
+        if not corresponding_site:
+            # no predicted site with overlapping umls results, so set
+            # normalized name as name for top umls entry for this site
+            pass
+        else:
+            # set normalized name for this recorded site and its corresponding
+            # predicted site as the top overlapping umls entry between them
+            pass
+
+    for pred in pred_sites:
+        # if predicted site didn't have corresponding recorded site, set
+        # normalized name as top umls entry
+        if pred_sites[pred]['normalized_name'] is None:
+            pred_sites[pred]['normalized_name'] = None
+
+    return
+
+
+def predict_and_normalize_infection_sites(txt: str, recorded_infection_sites: str) \
+    -> Tuple[str, str]:
+    """Docstring goes here.
+    """
+    txt = nlp(txt)
+    infection_sents = [sent for sent in txt.sents if infection_matcher(sent)]
+
+    pred_infection_sites = {}
+    for sent in infection_sents:
+        # collect entities from sentence that are possible Microsporidia infection
+        # sites
+        possible_infection_sites = \
+            [ent for ent in sent.ents if not \
+                any([part in ent.text.lower() for part in MICROSPORIDIA_PARTS]) and \
+                    has_valid_umls_entries(ent)]
+
+        for site in possible_infection_sites:
+            pred_infection_sites[site.text] = {
+                'umls_entries': site._.kb_ents,
+                'normalized_name': None
+            }
+
+    return resolve_normalized_names(pred_infection_sites, recorded_infection_sites)
 
 ################################################################################
 
