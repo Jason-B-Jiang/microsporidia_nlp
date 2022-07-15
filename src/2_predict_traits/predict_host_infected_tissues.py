@@ -3,7 +3,7 @@
 # Predict microsporidia sites of infection in hosts
 #
 # Jason Jiang - Created: 2022/06/02
-#               Last edited: 2022/07/14
+#               Last edited: 2022/07/15
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -12,7 +12,7 @@
 import spacy
 import scispacy
 from spacy.matcher import Matcher
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 from scispacy.linking import EntityLinker
 import re
 import pandas as pd
@@ -34,6 +34,38 @@ nlp.add_pipe("scispacy_linker",
              config={"resolve_abbreviations": True, "linker_name": "umls"})
 
 linker = nlp.get_pipe("scispacy_linker")
+
+################################################################################
+
+def main() -> None:
+    microsp_data = pd.read_csv('../../data/manually_format_multi_species_papers.csv')
+
+    # Fill missing values in these columns with empty strings
+    microsp_data[['infection_site', 'hosts_natural', 'hosts_experimental', 'title_abstract']] = \
+        microsp_data[['infection_site', 'hosts_natural', 'hosts_experimental', 'title_abstract']].fillna('')
+
+    # clean recorded infection sites
+    microsp_data['infection_site_formatted'] = microsp_data.apply(
+        lambda df: clean_recorded_infection_sites(df.infection_site, df.hosts_natural,
+                                                  df.hosts_experimental),
+            axis=1)
+
+    # normalize recorded infection sites with umls names (if possible) and get
+    # predicted infection sites
+    microsp_data[['infection_site_normalized', 'pred_infection_site']] = \
+        [predict_and_normalize_infection_sites(txt, sites_formatted) for \
+            txt, sites_formatted in \
+                zip(microsp_data.title_abstract, microsp_data.infection_site_formatted)]
+    
+    microsp_data[['species', 'num_papers', 'title_abstract', 'infection_site',
+                  'infection_site_formatted', 'infection_site_normalized',
+                  'pred_infection_site']].to_csv(
+                      Path('../../results/microsp_infection_site_predictions.csv')
+                  )
+
+################################################################################
+
+## HELPER CODE + FUNCTIONS
 
 ################################################################################
 
@@ -205,11 +237,12 @@ def clean_recorded_infection_sites(sites: str, hosts_natural: str,
 # Base words in a sentence indicates it has info about Microsporidia infection
 # sites
 INFECTION_LEMMAS = ['find', 'parasitize', 'infect', 'infeet', 'describe',
-                    'localize', 'invade', 'appear', 'parasite']
+                    'localize', 'invade', 'appear', 'parasite', 'infection',
+                    'appear', 'invasion', 'occur']
 
 infection_matcher = Matcher(nlp.vocab)
 infection_matcher.add('infection_site',
-                      [[{'POS': 'VERB', 'LEMMA': {'IN': INFECTION_LEMMAS}}]])
+                      [[{'LEMMA': {'IN': INFECTION_LEMMAS}}]])
 
 # Words that correspond to Microsporidia anatomy, and not host infection sites,
 # and so shouldn't be part of predicted infection sites of a Microsporidia species
@@ -276,18 +309,6 @@ def get_site_spans(doc: spacy.tokens.doc.Doc) -> List[spacy.tokens.span.Span]:
     return [doc[:]]  # return doc as a span and 'as is' if no semicolons
 
 
-def get_intersecting_umls_names(recorded_names: List[Tuple[str]],
-                                pred_names: List[Tuple[str]]) \
-                                    -> List[str]:
-    """Docstring goes here
-    """
-    if not recorded_names:
-        return []
-
-    # get intersecting entries between recorded_names and pred_names
-    return [s[0] for s in recorded_names if s[0] in [t[0] for t in pred_names]]
-
-
 def get_recorded_sites_dict(recorded_infection_sites: str) -> dict:
     """Docstring goes here.
     """
@@ -338,36 +359,105 @@ def has_valid_umls_entries(ent: spacy.tokens.span.Span) -> bool:
     return len(ent._.kb_ents) > 0
 
 
+def get_top_overlapping_umls_entry(umls_1: List[Tuple[str, float]],
+                                   umls_2: List[Tuple[str, float]]) -> Tuple[str, float]:
+    """Docstring goes here.
+    """
+    overlapping_umls_terms = [umls[0] for umls in umls_1 if umls[0] in \
+        [u[0] for u in umls_2]]
+
+    umls_1 = [umls for umls in umls_1 if umls[0] in overlapping_umls_terms]
+    umls_2 = [umls for umls in umls_2 if umls[0] in overlapping_umls_terms]
+
+    assert len(umls_1) == len(umls_2)
+
+    top_avg_umls_confidence = 0.0
+    top_umls_term = ""
+
+    for i in range(len(umls_1)):
+        curr_avg_confidence = (umls_1[i][1] + umls_2[i][1]) / 2
+        if curr_avg_confidence > top_avg_umls_confidence:
+            top_avg_umls_confidence = curr_avg_confidence
+            top_umls_term = umls_1[i][0]
+
+    if top_umls_term:
+        return linker.kb.cui_to_entity[top_umls_term].canonical_name, \
+            top_avg_umls_confidence
+    
+    return top_umls_term, top_avg_umls_confidence
+
+
+def get_normalized_site_name(recorded_site: str, umls_entries: List[Tuple[str, float]],
+                             pred_sites: Dict[str, dict]) -> str:
+    """Docstring goes here.
+    """
+    normalized_name = recorded_site
+    top_pred = ""
+
+    # top average confidence in overlapping UMLS entry between recorded_site and some
+    # predicted site
+    top_avg_umls_confidence = 0.0 
+
+    for pred in pred_sites:
+        # only consider predicted sites that have not been normalized yet
+        if pred_sites[pred]['normalized_name'] is None:
+            if recorded_site in pred:
+                # get top umls entry name for predicted site that has
+                # recorded site as a substring, to set as normalized name
+                normalized_name = \
+                    linker.kb.cui_to_entity[
+                        pred_sites[pred]['umls_entries'][0][0]
+                    ].canonical_name
+
+                top_pred = pred
+                break
+            
+            curr_top_umls_entry, curr_avg_umls_confidence = \
+                get_top_overlapping_umls_entry(umls_entries, pred_sites[pred]['umls_entries'])
+
+            # if no overlapping umls entries were found between recorded and
+            # predicted site, returned curr_avg_umls_confidence will be zero,
+            # so nothing will happen
+            if curr_avg_umls_confidence > top_avg_umls_confidence:
+                top_avg_umls_confidence = curr_avg_umls_confidence
+                normalized_name = curr_top_umls_entry
+                top_pred = pred
+        
+    if top_pred:
+        pred_sites[top_pred]['normalized_name'] = normalized_name
+
+    return normalized_name
+
+
 def resolve_normalized_names(pred_sites: dict, recorded_sites: str) -> \
     Tuple[str, str]:
     """Get UMLS normalized names for predicted sites + recorded sites.
     """
     # Process recorded infection sites with spaCy, and extract relevant entities
     recorded_sites = get_recorded_sites_dict(recorded_sites)
+
     for site in recorded_sites:
         if recorded_sites[site]['normalized_name'] is not None:
             # recorded site was not detected as entity, so skip it
             continue
-
-        corresponding_site = \
-            get_corresponding_pred_site(recorded_sites[site], pred_sites)
         
-        if not corresponding_site:
-            # no predicted site with overlapping umls results, so set
-            # normalized name as name for top umls entry for this site
-            pass
-        else:
-            # set normalized name for this recorded site and its corresponding
-            # predicted site as the top overlapping umls entry between them
-            pass
+        # get dictionary key from predicted sites that most likely
+        # corresponds to this recorded site
+        normalized_name = \
+            get_normalized_site_name(site, recorded_sites[site]['umls_entries'],
+                                     pred_sites)
+        
+        recorded_sites[site]['normalized_name'] = normalized_name
 
     for pred in pred_sites:
         # if predicted site didn't have corresponding recorded site, set
         # normalized name as top umls entry
         if pred_sites[pred]['normalized_name'] is None:
-            pred_sites[pred]['normalized_name'] = None
+            pred_sites[pred]['normalized_name'] = \
+                linker.kb.cui_to_entity[pred_sites[pred]['umls_entries'][0][0]].canonical_name
 
-    return
+    return '; '.join([recorded_sites[site]['normalized_name'] for site in recorded_sites]), \
+        '; '.join([pred_sites[site]['normalized_name'] for site in pred_sites])
 
 
 def predict_and_normalize_infection_sites(txt: str, recorded_infection_sites: str) \
@@ -377,6 +467,8 @@ def predict_and_normalize_infection_sites(txt: str, recorded_infection_sites: st
     txt = nlp(txt)
     infection_sents = [sent for sent in txt.sents if infection_matcher(sent)]
 
+    # note: some relevant entities that get flagged but doesn't have
+    # UMLS entries (ex: gastric caeca, oenocytes)
     pred_infection_sites = {}
     for sent in infection_sents:
         # collect entities from sentence that are possible Microsporidia infection
@@ -396,27 +488,5 @@ def predict_and_normalize_infection_sites(txt: str, recorded_infection_sites: st
 
 ################################################################################
 
-microsp_data = pd.read_csv('../../data/manually_format_multi_species_papers.csv')
-
-# Fill missing values in these columns with empty strings
-microsp_data[['infection_site', 'hosts_natural', 'hosts_experimental', 'title_abstract']] = \
-    microsp_data[['infection_site', 'hosts_natural', 'hosts_experimental', 'title_abstract']].fillna('')
-
-# clean recorded infection sites
-microsp_data['infection_site_formatted'] = microsp_data.apply(
-    lambda df: clean_recorded_infection_sites(df.infection_site, df.hosts_natural,
-                                              df.hosts_experimental),
-    axis=1)
-
-# normalize recorded infection sites with umls names (if possible) and get
-# predicted infection sites
-microsp_data[['infection_site_normalized', 'pred_infection_site']] = \
-    [predict_and_normalize_infection_sites(txt, sites_formatted) for \
-        txt, sites_formatted in \
-            zip(microsp_data.title_abstract, microsp_data.infection_site_formatted)]
-
-microsp_data[['species', 'num_papers', 'title_abstract', 'infection_site',
-              'infection_site_formatted', 'infection_site_normalized',
-              'pred_infection_site']].to_csv(
-    Path('../../results/microsp_infection_site_predictions.csv')
-    )
+if __name__ == '__main__':
+    main()
