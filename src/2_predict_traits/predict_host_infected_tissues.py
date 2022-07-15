@@ -369,6 +369,7 @@ def get_top_overlapping_umls_entry(umls_1: List[Tuple[str, float]],
     umls_1 = [umls for umls in umls_1 if umls[0] in overlapping_umls_terms]
     umls_2 = [umls for umls in umls_2 if umls[0] in overlapping_umls_terms]
 
+    # sanity check for myself
     assert len(umls_1) == len(umls_2)
 
     top_avg_umls_confidence = 0.0
