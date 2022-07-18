@@ -3,7 +3,7 @@
 # Evaluate accuracy of predicted microsporidia traits
 #
 # Jason Jiang - Created: 2022/05/17
-#               Last edited: 2022/07/15
+#               Last edited: 2022/07/18
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -507,13 +507,27 @@ get_nucleus_tp <- function(pred_nucleus, nucleus) {
   # Docstring goes here
   # ---------------------------------------------------------------------------
   tp <- 0
+  pred_nucleus <- sort(pred_nucleus)
+  nucleus <- sort(nucleus)
+  
   while (length(pred_nucleus) > 0 & length(nucleus) > 0) {
-    curr <- pred_nucleus[length(pred_nucleus)]
-    pred_nucleus <- pred_nucleus[1 : length(pred_nucleus) - 1]
-    
-    tp <- tp + curr %in% nucleus
-    
-    nucleus <- nucleus[-which(nucleus == curr)[1]]
+    if (pred_nucleus[length(pred_nucleus)] == nucleus[length(nucleus)]) {
+      # if last elements of both vectors are equal, add 1 to true positive count
+      # and remove last elements of both vectors
+      tp <- tp + 1
+      pred_nucleus <- pred_nucleus[-length(pred_nucleus)]
+      nucleus <- nucleus[-length(nucleus)]
+      
+    } else if (pred_nucleus[length(pred_nucleus)] > nucleus[length(nucleus)]) {
+      # last element of first vector is greater than last element of second
+      # vector, remove last element of first vector
+      pred_nucleus <- pred_nucleus[-length(pred_nucleus)]
+      
+    } else {
+      # last element of second vector is greater than last element of first
+      # vector, remove last element of second vector
+      nucleus <- nucleus[-length(nucleus)]
+    }
   }
   
   return(tp)
@@ -549,3 +563,24 @@ get_nucleus_tp_fp_fn <- function(pred_nucleus, nucleus) {
   
   return(str_c(tp, fp, fn, sep = ','))
 }
+
+nucleus_preds <- read_csv('/home/boognish/Desktop/microsporidia_nlp/results/microsp_spore_nuclei_predictions.csv') %>%
+  filter(num_papers < 2, !is.na(pred_nucleus) | !is.na(nucleus),
+         nucleus_data_in_text) %>%
+  rowwise() %>%
+  mutate(pred_nucleus = ifelse(!is.na(pred_nucleus), pred_nucleus, ''),
+         nucleus = ifelse(!is.na(nucleus), nucleus, ''),
+         tp_fp_fn = get_nucleus_tp_fp_fn(pred_nucleus, nucleus)) %>%
+  separate(col= tp_fp_fn, into = c('tp', 'fp', 'fn'), sep = ',') %>%
+  mutate(tp = as.integer(tp),
+         fp = as.integer(fp),
+         fn = as.integer(fn))
+
+# 74.5% precision, 40% recall if consider all data
+# 74.5% precision, 72.6% recall if only consider entries where nucleus data is
+# in abstract
+nucleus_precision <-
+  sum(nucleus_preds$tp) / (sum(nucleus_preds$tp) + sum(nucleus_preds$fp))
+
+nucleus_recall <-
+  sum(nucleus_preds$tp) / (sum(nucleus_preds$tp) + sum(nucleus_preds$fn))

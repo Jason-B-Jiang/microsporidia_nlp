@@ -120,6 +120,9 @@ def get_most_likely_region(location, geonames_result, geo_preds_regions) -> \
     #
     # sort likely regions with i, so we can pick the first geonames
     # result that overlaps with flashgeotext predicted regions
+    #
+    # country = country of origin for location, address = "canonical" name for
+    # location from geonames
     likely_regions = [(res.country, res.address, i) for res, i in \
         enumerate(geonames_result) if res.country in geo_preds_regions].sort(key = lambda x: x[2])
 
@@ -206,9 +209,8 @@ def get_regions_and_subregions(spacy_preds: List[spacy.tokens.span.Span]) -> \
             # their own regions
             undetermined.append(pred.text)
 
-    # start assigning cities back to their regions/countries, and either
-    # assign undetermined locations to their respective regions, or denote
-    # them as their own regions
+    # start assigning undetermined regions back to their regions/countries,
+    # or mark them as their own independent regions
     for loc in undetermined:
         set_as_region_or_subregion(loc, regions)
 
@@ -230,6 +232,11 @@ def predict_localities(txt: str) ->  Dict[str, dict]:
 
     # remove any location predictions that are actually just taxonomic names,
     # as those tend to get tagged as location entities by spacy
+    #
+    # Idea: have host/microsporidia species prediction script run first, then
+    # use results from that to filter out taxonomic entities, instead of waiting
+    # an hour to redo the predictions again here.
+    #
     # spacy_preds = remove_taxonomic_entities(spacy_preds)
 
     # return the predicted locations as a dictionary of regions and their
