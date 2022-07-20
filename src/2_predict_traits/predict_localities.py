@@ -10,17 +10,15 @@
 #
 # -----------------------------------------------------------------------------
 
-from tkinter import N
 from flashgeotext.geotext import GeoText
 import spacy
 import geocoder
-import pickle
-from os.path import exists
 from typing import Dict, List, Tuple, Optional
 import pandas as pd
 import re
 import copy
 from pathlib import Path
+from taxonerd import TaxoNERD
 
 ################################################################################
 
@@ -28,17 +26,17 @@ from pathlib import Path
 nlp = spacy.load('en_core_web_md')
 geotext = GeoText()
 
+# use taxonerd to predict taxonomic entities in texts, and prevent these from
+# being part of locality predictions (as spaCy tends to tag taxonomic names
+# as geographical entities)
+taxonerd = TaxoNERD(model="en_ner_eco_biobert", prefer_gpu=False, with_abbrev=True)
+
 ################################################################################
 
 ## Global variables
 SPACY_LOCALITIES = ['FAC', 'GPE', 'LOC']  # spacy entities corresponding to localities
 
-if exists('geonames_cache.pickle'):
-    # load in cached geonames search results
-    with open('geonames_cache.pickle', 'r') as f:
-        GEONAMES_CACHE = pickle.load(f)
-else:
-    GEONAMES_CACHE = {}
+GEONAMES_CACHE = {}
 
 USERNAME = 'jiangjas'  # fill in your own geonames username here
 
@@ -222,6 +220,33 @@ def get_regions_and_subregions(spacy_preds: List[spacy.tokens.span.Span]) -> \
     return regions
 
 
+def remove_taxonomic_entities(spacy_preds: List[spacy.tokens.span.Span],
+                              txt: str) -> \
+                                  None:
+    """From a list of spaCy entities, remove any that are substrings of any
+    TaxoNERD predicted taxonomic entities, or any which have taxonomic entities
+    as substrings.
+    
+    Return None, mutating spacy_preds in place.
+    """
+    taxonomic_ents = taxonerd.find_in_text(txt)
+    if taxonomic_ents.empty:
+        return
+    
+    taxonomic_ents = taxonomic_ents['text'].tolist()
+
+    preds_to_remove = []
+    for pred in spacy_preds:
+        # spacy entity is a substring of any predicted taxonomic entity, or
+        # any predicted taxonomic entity is substring of spacy entity
+        if any([pred.text in taxo or taxo in pred.text for \
+            taxo in taxonomic_ents]):
+            preds_to_remove.append(pred)
+
+    for pred in preds_to_remove:
+        spacy_preds.remove(pred)
+
+
 def predict_localities(txt: str) ->  Dict[str, dict]:
     """For a text, use flashgeotext + spaCy to predict countries and their
     associated cities/internal regions/etc.
@@ -237,12 +262,7 @@ def predict_localities(txt: str) ->  Dict[str, dict]:
 
     # remove any location predictions that are actually just taxonomic names,
     # as those tend to get tagged as location entities by spacy
-    #
-    # Idea: have host/microsporidia species prediction script run first, then
-    # use results from that to filter out taxonomic entities, instead of waiting
-    # an hour to redo the predictions again here.
-    #
-    # spacy_preds = remove_taxonomic_entities(spacy_preds)
+    remove_taxonomic_entities(spacy_preds, txt)
 
     # return the predicted locations as a dictionary of regions and their
     # subregions (ex: region = Australia, subregions = [Melbourne, Sydney])
@@ -446,9 +466,3 @@ microsp_data = microsp_data.assign(
 microsp_data[['species', 'title_abstract', 'locality', 'locality_normalized', 'pred_locality']].to_csv(
     Path('../../results/microsp_locality_predictions.csv')
     )
-
-# Save cached geonames search results
-# pickling isn't working for me, so I'm commenting out the code
-# with open('geonames_cache.pickle', 'w') as f:
-#     if GEONAMES_CACHE != {}:  # don't bother writing an empty cache
-#         pickle.dump(GEONAMES_CACHE, f)

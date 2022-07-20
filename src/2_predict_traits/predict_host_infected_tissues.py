@@ -3,7 +3,7 @@
 # Predict microsporidia sites of infection in hosts
 #
 # Jason Jiang - Created: 2022/06/02
-#               Last edited: 2022/07/15
+#               Last edited: 2022/07/20
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -41,8 +41,8 @@ def main() -> None:
     microsp_data = pd.read_csv('../../data/manually_format_multi_species_papers.csv')
 
     # Fill missing values in these columns with empty strings
-    microsp_data[['infection_site', 'hosts_natural', 'hosts_experimental', 'title_abstract']] = \
-        microsp_data[['infection_site', 'hosts_natural', 'hosts_experimental', 'title_abstract']].fillna('')
+    microsp_data[['infection_site', 'hosts_natural', 'hosts_experimental', 'abstract']] = \
+        microsp_data[['infection_site', 'hosts_natural', 'hosts_experimental', 'abstract']].fillna('')
 
     # clean recorded infection sites
     microsp_data['infection_site_formatted'] = microsp_data.apply(
@@ -55,9 +55,9 @@ def main() -> None:
     microsp_data[['infection_site_normalized', 'pred_infection_site']] = \
         [predict_and_normalize_infection_sites(txt, sites_formatted) for \
             txt, sites_formatted in \
-                zip(microsp_data.title_abstract, microsp_data.infection_site_formatted)]
+                zip(microsp_data.abstract, microsp_data.infection_site_formatted)]
     
-    microsp_data[['species', 'num_papers', 'title_abstract', 'infection_site',
+    microsp_data[['species', 'num_papers', 'paper_title', 'abstract', 'infection_site',
                   'infection_site_formatted', 'infection_site_normalized',
                   'pred_infection_site']].to_csv(
                       Path('../../results/microsp_infection_site_predictions.csv')
