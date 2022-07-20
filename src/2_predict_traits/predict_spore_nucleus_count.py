@@ -162,8 +162,7 @@ def check_if_nucleus_data_in_text(txt: str) -> bool:
         txt: title + abstract or full text for a Microsporidia paper
     """
     doc = get_cached_text(txt)
-    nucleus_sents = [sent for sent in doc.sents if nucleus_matcher(sent) and \
-        not immature_spore_matcher(sent)]
+    nucleus_sents = [sent for sent in doc.sents if nucleus_matcher(sent)]
 
     return len(nucleus_sents) > 0
 
