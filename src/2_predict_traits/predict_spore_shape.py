@@ -3,7 +3,7 @@
 # Predict microsporidia spore shape
 #
 # Jason Jiang - Created: 2022/07/13
-#               Last edited: 2022/07/19
+#               Last edited: 2022/07/20
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -46,18 +46,102 @@ spore_matcher.add('spore',  [[{'TEXT': {'REGEX': '(?<!(xo|do))[Ss]pore'}}]])
 ################################################################################
 
 def main() -> None:
-    microsp_data = pd.read_csv('../../data/manually_format_multi_species_papers.csv')
+    microsp_data = pd.read_csv(
+        '../../data/manually_format_multi_species_papers.csv'
+        )
+
     microsp_data = microsp_data.assign(
-        pred_shape = lambda df: predict_spore_shape(df.title_abstract)
+        pred_shape = lambda df: get_spore_shape_string(
+            predict_spore_shapes(df.title_abstract)
+        )
     )
 
     microsp_data.to_csv(Path('../../results/microsp_spore_shape_predictions.csv'))
 
 ################################################################################
 
-## Helper functions
+## Helper functions for predicting spore shapes + associated spore types from
+## texts
 
-def predict_spore_shape(txt: str) -> str:
+def get_match_spans(matches: List[Tuple[int]], sent: spacy.tokens.span.Span,
+                    doc: spacy.tokens.doc.Doc) -> \
+    List[spacy.tokens.span.Span]:
+    """Docstring goes here.
+    """
+    match_spans = []
+
+    if doc:
+        for match in matches:
+            match_spans.append(doc[match[1] : match[2]])
+    else:
+        for match in matches:
+            match_spans.append(sent[match[1] : match[2]])
+
+    return match_spans
+
+
+def match_shapes_to_spores(spore_spans: List[spacy.tokens.span.Span],
+                           shape_spans: List[spacy.tokens.span.Span]) -> \
+                               List[Tuple[str, str]]:
+    """Match every spore shape to its corresponding spore type.
+    Each spore type should only be associated with a single shape, but
+    each shape may apply for multiple spores.
+
+    Return a list of tuples of (spore type, spore shape).
+    """
+    if len(shape_spans) == 0:
+        return []
+
+    shapes_to_spores = []
+
+    for spore in spore_spans:
+        closest_shape = get_closest_shape(spore, shape_spans)
+        shapes_to_spores.append((spore.lemma_, closest_shape.text))
+    
+    return shapes_to_spores
+
+
+def get_closest_shape(spore: Tuple[str, int, int],
+                      shape_spans: List[spacy.tokens.span.Span]) -> \
+                          Tuple[str, int, int]:
+    """Get closest shape to a spore type mentioned in a text, using
+    start and stop coordinates of the spans for spore types/shapes
+    to get closest matches.
+
+    Break ties for shapes equidistant to a spore type by choosing the
+    shape that comes before the spore in the text.
+    """
+    return sorted(shape_spans, key=lambda x: get_span_distance(spore, x))[0]
+
+
+def get_span_distance(s1: spacy.tokens.span.Span,
+                      s2: spacy.tokens.span.Span) -> int:
+    """Return the number of tokens that two spans are separated by.
+    Return -1 is s1 and s2 are the same span (i.e: there are no tokens
+    separating the spans)
+    """
+    # s1 comes after s2
+    if s1.start > s2.start:
+        return s1.start - s2.end
+    
+    # s1 comes before s2
+    return s2.start - s1.end
+
+
+def get_spore_shape_string(spore_shapes: List[Tuple[str, str]]) -> str:
+    """Docstring goes here.
+    """
+    s = []
+    for tup in spore_shapes:
+        if tup[0] == 'spores' or tup[0] == 'spore':
+            s.append(f"{tup[1]} (normal spore)")
+        else:
+            s.append(f"{tup[1]} ({tup[0]})")
+    
+    return '; '.join(s)
+
+
+def predict_spore_shapes(txt: str) -> str:
     """Predict shapes for each type of spore mentioned in some string, txt.
     Return a string in the form of "{shape} ({spore class name}); ..."
 
@@ -76,40 +160,14 @@ def predict_spore_shape(txt: str) -> str:
 
     spore_shapes = []  # list of tuples, (spore name, spore shape)
     for sent in spore_sents:
-        spore_spans = get_match_spans(spore_sents[sent]['spore_types'], sent)
-        shape_spans = get_match_spans(spore_sents[sent]['spore_shapes'], sent)
+        spore_spans = get_match_spans(spore_sents[sent]['spore_types'], sent, None)
+        shape_spans = get_match_spans(spore_sents[sent]['spore_shapes'], sent, doc)
 
-        spore_shapes.extend(get_spore_type_shapes(spore_spans, shape_spans))
+        spore_shapes.extend(match_shapes_to_spores(spore_spans, shape_spans))
     
-    return get_spore_shape_string(spore_shapes)
-
-
-def get_match_spans(matches: List[Tuple[int]], sentence: spacy.tokens.span.Span) -> \
-    List[Tuple[str, int, int]]:
-    """Docstring goes here.
-    """
-    match_spans = []
-    for match in matches:
-        match_spans.append((sentence[match[1] : match[2]].text, match[1], match[2]))
-
-    return match_spans
-
-
-def get_spore_type_shapes(spore_spans: List[Tuple[str, int, int]],
-                          shape_spans: List[Tuple[str, int, int]]) -> \
-                              List[Tuple[str, str]]:
-    """Docstring goes here.
-    """
-    shape_spans_copy = shape_spans.copy()  # to keep original list unmodified
-
-
-def get_spore_shape_string(spore_shapes: List[Tuple[str, str]]) -> str:
-    """Docstring goes here.
-    """
-    pass
+    return spore_shapes
 
 ################################################################################
 
 if __name__ == '__main__':
     main()
-    
