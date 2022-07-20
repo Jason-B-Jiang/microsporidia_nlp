@@ -3,7 +3,7 @@
 # Predict microsporidia spore shape
 #
 # Jason Jiang - Created: 2022/07/13
-#               Last edited: 2022/07/13
+#               Last edited: 2022/07/19
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -13,10 +13,13 @@ import spacy
 from spacy.matcher import PhraseMatcher, Matcher
 import pandas as pd
 from pathlib import Path
+from typing import List, Tuple
 
 ################################################################################
 
 ## Global variables
+
+# Note: a lot of these variables are reused from predict_spore_nucleus_count.py
 
 nlp = spacy.load('en_core_web_md')
 
@@ -67,10 +70,43 @@ def predict_spore_shape(txt: str) -> str:
     # (and thus spore shapes)
     # make a dictionary, with keys as spore sentences as values as
     # a dictionary of spore shapes + spore types in each sentence
-    spore_sents = {sent: {'spore_types' = spore_matcher(sent), 'spore_shapes': shape_matcher(sent)} \
-        for sent in doc.sents if spore_matcher(sent)}
+    spore_sents = {sent: {'spore_types': spore_matcher(sent),
+                          'spore_shapes': shape_matcher(sent)} \
+                              for sent in doc.sents if spore_matcher(sent)}
 
-    return
+    spore_shapes = []  # list of tuples, (spore name, spore shape)
+    for sent in spore_sents:
+        spore_spans = get_match_spans(spore_sents[sent]['spore_types'], sent)
+        shape_spans = get_match_spans(spore_sents[sent]['spore_shapes'], sent)
+
+        spore_shapes.extend(get_spore_type_shapes(spore_spans, shape_spans))
+    
+    return get_spore_shape_string(spore_shapes)
+
+
+def get_match_spans(matches: List[Tuple[int]], sentence: spacy.tokens.span.Span) -> \
+    List[Tuple[str, int, int]]:
+    """Docstring goes here.
+    """
+    match_spans = []
+    for match in matches:
+        match_spans.append((sentence[match[1] : match[2]].text, match[1], match[2]))
+
+    return match_spans
+
+
+def get_spore_type_shapes(spore_spans: List[Tuple[str, int, int]],
+                          shape_spans: List[Tuple[str, int, int]]) -> \
+                              List[Tuple[str, str]]:
+    """Docstring goes here.
+    """
+    shape_spans_copy = shape_spans.copy()  # to keep original list unmodified
+
+
+def get_spore_shape_string(spore_shapes: List[Tuple[str, str]]) -> str:
+    """Docstring goes here.
+    """
+    pass
 
 ################################################################################
 
