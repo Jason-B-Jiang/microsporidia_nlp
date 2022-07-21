@@ -335,6 +335,27 @@ def predict_localities(txt: str) ->  Dict[str, dict]:
 
 ## Helper functions for normalizing recorded localities, so they're consistent
 ## with predicted localities
+def clean_locality_string(loc: str) -> str:
+    """Docstring goes here.
+    """
+    exceptions_dict = {
+        '(pond (Mavlukeevskoe lake) within Tom River flood plain, Tomsk region, Western Siberia) Russia': \
+            'Russia (Mavlukeevskoe lake in Tom River flood plain, Tomsk region, Western Siberia)',
+            '(pond (Krotovo Lake) located near the village of Troitskoe, Novosibirsk region, Western Siberia) Russia': \
+                'Russia (Krotovo Lake near the village of Troitskoe, Novosibirsk region, Western Siberia)'
+    }
+
+    if loc in exceptions_dict:
+        return exceptions_dict[loc]
+
+    loc = loc.strip()
+
+    if loc[0] == '(':
+        tmp = loc.split(')')
+        loc = tmp[1].strip() + ' ' + tmp[0] + ')'
+
+    return loc
+
 
 def create_locality_dictionary(recorded_locs: str) -> dict:
     """For a string of recorded localities from a text, turn this string into
@@ -346,7 +367,8 @@ def create_locality_dictionary(recorded_locs: str) -> dict:
                   'found_as': ['U.S.']},
          'Belarus': {'subregions': {}, 'found_as': ['Belarus']}}
     """
-    recorded_locs = [s.strip() for s in recorded_locs.split(';')]
+    recorded_locs = [clean_locality_string(s) for s in recorded_locs.split(';')]
+
     locs_dict = {}
 
     for loc in recorded_locs:
@@ -436,7 +458,8 @@ def geonames_normalize_recorded_localities(unnormalized_locs: Dict[str, List[str
     
     Modifies recorded_locs in-place.
     """
-    for region in unnormalized_locs:
+    unnormalized_locs_copy = copy.deepcopy(unnormalized_locs)
+    for region in unnormalized_locs_copy:
         normalized_region = region  # replace with canonical geonames name, if possible
 
         if not unnormalized_locs[region]['normalized_region']:
@@ -473,7 +496,7 @@ def get_geonames_canonical_region(region: str) -> Optional[str]:
     if not results:
         return  # no geonames results, return None
 
-    return get_top_location_hit(region, results)
+    return get_top_location_hit(region, results).address
 
 
 def get_geonames_canonical_subregion(subregion: str, normalized_region: str) -> \
@@ -487,17 +510,22 @@ def get_geonames_canonical_subregion(subregion: str, normalized_region: str) -> 
         normalized_region: geonames/flashgeonames-normalized name for the region
         to this subregion
     """
-    results = get_cached_geonames_results
+    results = get_cached_geonames_results(subregion)
     if not results:
         return  # no geonames results, return None
 
     # get results with country of origin as normalized_region
     region_results = [res for res in results if res.country == normalized_region]
 
-    if not region_results:
-        return get_top_location_hit(subregion)
+    # get results in region_results with exact name match to subregion
+    exact_result = [res for res in region_results if res.address == subregion]
+
+    if exact_result:
+        return exact_result[0].address
+    elif region_results:
+        return region_results[0].address
     
-    return region_results[0]
+    return get_top_location_hit(subregion, results).address
 
 
 def normalize_recorded_localities(recorded_locs: str) -> str:
@@ -525,8 +553,6 @@ def normalize_recorded_localities(recorded_locs: str) -> str:
     # best geonames hit
     geonames_normalize_recorded_localities(unnormalized_locs, recorded_locs_dict)
 
-    # TODO - write function turning this into a string (same function can be
-    # used for predicting and normalizing)
     return recorded_locs_dict
 
 ################################################################################

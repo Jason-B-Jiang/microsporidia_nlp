@@ -52,7 +52,7 @@ nucleus_count = {'nucleus': 1, 'nuclei': 2, 'unikaryotic': 1, 'unikariotic': 1,
                  'unikaryonidae': 1}
 
 immature_spore_terms = ('sporoblast', 'sporont', 'meront', 'schizont', 'plasmodia',
-                        'merozoite', 'merogonial')
+                        'merozoite', 'merogonial', 'merogony', 'presporont', 'plasmodium')
 
 # matcher for nucleus data terms
 nucleus_matcher = PhraseMatcher(nlp.vocab, attr='LOWER')
