@@ -61,7 +61,7 @@ def main() -> None:
     microsp_data = microsp_data.assign(
         locality_normalized = lambda df: df['locality'].map(
             lambda locs: get_localities_string(
-                normalize_recorded_localities(locs)[1]
+                normalize_recorded_localities(locs)
                 ), na_action='ignore'
         )
     )

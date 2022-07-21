@@ -40,15 +40,6 @@ def get_cached_text(txt: str) -> spacy.tokens.doc.Doc:
 
 nlp = spacy.load('en_core_web_md')
 
-nucleus_terms = ('nucleus', 'nuclei', 'unikaryotic', 'unikariotic', 'unicaryotic',
-                 'unicariotic', 'unikaryon', 'unikarion', 'unicaryon', 'unicarion',
-                 'monokaryotic', 'monokariotic', 'monocaryotic', 'monocariotic',
-                 'monokaryon', 'monokarion', 'monocaryon', 'monocarion',
-                 'diplokaryotic', 'diplokariotic', 'diplocaryotic', 'diplocariotic',
-                 'diplokaryon', 'diplokarion', 'diplocaryon', 'diplocarion',
-                 'uninucleate', 'mononucleate', 'binucleate', 'uninuclear',
-                 'binuclear')
-
 nucleus_count = {'nucleus': 1, 'nuclei': 2, 'unikaryotic': 1, 'unikariotic': 1,
                  'unicaryotic': 1, 'unicariotic': 1, 'unikaryon': 1, 'unikarion': 1,
                  'unicaryon': 1, 'unicarion': 1, 'monokaryotic': 1, 'monokariotic': 1,
@@ -57,14 +48,15 @@ nucleus_count = {'nucleus': 1, 'nuclei': 2, 'unikaryotic': 1, 'unikariotic': 1,
                  'diplokariotic': 2, 'diplocaryotic': 2, 'diplocariotic': 2,
                  'diplokaryon': 2, 'diplokarion': 2, 'diplocaryon': 2, 'diplocarion': 2,
                  'uninucleate': 1, 'mononucleate': 1, 'binucleate': 2, 'uninuclear': 1,
-                 'binuclear': 2}
+                 'binuclear': 2, 'mononuclear': 1, 'single-nuclear': 1, 'uninuclcate': 1,
+                 'unikaryonidae': 1}
 
 immature_spore_terms = ('sporoblast', 'sporont', 'meront', 'schizont', 'plasmodia',
-                        'merozoite', 'merogonial', '')
+                        'merozoite', 'merogonial')
 
 # matcher for nucleus data terms
 nucleus_matcher = PhraseMatcher(nlp.vocab, attr='LOWER')
-nucleus_matcher.add('nucleus', [nlp(term) for term in nucleus_terms])
+nucleus_matcher.add('nucleus', [nlp(term) for term in list(nucleus_count.keys())])
 
 # matcher for sentences containing info about immature spore structures that
 # may also have nucleus data (that we want to exclude)

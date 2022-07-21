@@ -3,7 +3,7 @@
 # Evaluate accuracy of predicted microsporidia traits
 #
 # Jason Jiang - Created: 2022/05/17
-#               Last edited: 2022/07/18
+#               Last edited: 2022/07/19
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -156,48 +156,6 @@ pt_len_recall <- sum(pt_len_preds$tp) / (sum(pt_len_preds$tp) + sum(pt_len_preds
 
 ################################################################################
 
-## Evaluate locality predictions
-
-# In general, we want to see if predictions are a substring of the recorded
-# data
-# This is because we expect recorded regions to be a little more descriptive,
-# while predicted regions should be more concise as we are extracting
-# spaCy entities and dictionary matches for countries/subregions
-
-# TP: number of regions + subregions that are actually in recorded data
-  # for subregions, allow prediction to be substring of recorded region, as
-  # recorded regions tend to be very descriptive
-
-# FP: number of regions + subregions not in recorded data
-  # i.e: prediction is not a substring of any of the recorded data
-
-# FN: number of regions + subregions in recorded data but not in predictions
-  # i.e: recorded region is not a substring of any predictions, and no predictions
-  #      are substrings of the recorded region
-
-get_false_pos_locality <- function(locality, pred_locality) {
-  locality <- str_split(locality, '; ')[[1]]
-  pred_locality <- str_split(pred_locality, '; ')[[1]]
-  false_pos <- c()
-  
-  for (pred in pred_locality) {
-    pred_region <- str_remove(pred, ' \\(.*\\)')
-    pred_subregions <-
-      str_split(str_extract(pred, '(?<=\\().*(?=\\))'), ' \\| ')[[1]]
-    
-    # 
-  }
-}
-
-microsp_locality_preds <- read_csv('../../results/microsp_locality_predictions.csv') %>%
-  mutate(false_pos = get_false_pos_locality(locality, pred_locality),
-         true_pos = get_true_pos_locality(locality, pred_locality),
-         false_neg = get_false_neg_locality(locality, pred_locality),
-         precision = get_locality_precision(true_pos, false_pos),
-         recall = get_locality_recall(true_pos, false_neg))
-
-################################################################################
-
 ## Evaluate microsporidia species names + hosts predictions
 ## ~58% of microsporidia names successfully extracted
 
@@ -243,83 +201,53 @@ microsp_host_preds <- read_csv('../../results/microsp_and_host_predictions.csv')
 
 ## Evaluate Microsporidia infection site predictions
 
-get_infection_site_tp <- function(recorded, pred) {
+get_infection_tp_fp_fn <- function(recorded, predicted) {
   # ---------------------------------------------------------------------------
   # Docstring goes here
   # ---------------------------------------------------------------------------
-  if (is.na(pred)) {
-    return(0)
-  }
-  
   if (is.na(recorded)) {
-    recorded <- character(0)
+    recorded <- character()
   } else {
     recorded <- str_split(recorded, '; ')[[1]]
   }
   
-  pred <- str_split(pred, '; ')[[1]]
-  
-  return(length(recorded[recorded %in% pred]))
-}
-
-
-get_infection_site_fp <- function(recorded, pred) {
-  # ---------------------------------------------------------------------------
-  # Docstring goes here
-  # ---------------------------------------------------------------------------
-  if (is.na(pred)) {
-    return(0)
-  }
-  
-  if (is.na(recorded)) {
-    recorded <- character(0)
+  if (is.na(predicted)) {
+    predicted <- character()
   } else {
-    recorded <- str_split(recorded, '; ')[[1]]
-  }
-
-  pred <- str_split(pred, '; ')[[1]]
-  
-  return(length(pred[!(pred %in% recorded)]))
-}
-
-
-get_infection_site_fn <- function(recorded, pred) {
-  # ---------------------------------------------------------------------------
-  # Docstring goes here
-  # ---------------------------------------------------------------------------
-  if (is.na(pred)) {
-    return(0)
+    predicted <- str_split(predicted, '; ')[[1]]
   }
   
-  if (is.na(recorded)) {
-    recorded <- character(0)
-  } else {
-    recorded <- str_split(recorded, '; ')[[1]]
-  }
+  tp <- length(intersect(recorded, predicted))
+  fp <- length(predicted) - tp
+  fn <- length(recorded) - tp
   
-  pred <- str_split(pred, '; ')[[1]]
-  
-  return(length(recorded[!(recorded %in% pred)]))
+  return(str_c(tp, fp, fn, sep = ','))
 }
 
-infection_sites_in_abstract <- function(title_abstract, infection_site) {
-  infection_site <- sapply(str_split(infection_site, '; ')[[1]],
-                           function(x) {tolower(str_remove(x, ' ?\\(.+\\)'))})
+all_recorded_sites_in_text <- function(recorded, text) {
+  recorded <- tolower(str_split(recorded, '; ')[[1]])
+  text <- tolower(text)
   
-  return(any(str_detect(tolower(title_abstract), infection_site)))
+  return(all(str_detect(text, recorded)))
 }
-
 
 microsp_infection_preds <- read_csv('../../results/microsp_infection_site_predictions.csv') %>%
   filter(num_papers < 2) %>%  # look at species with only 1 paper for now
   rowwise() %>%
-  mutate(tp = get_infection_site_tp(infection_site_normalized, pred_infection_site),
-         fp = get_infection_site_fp(infection_site_normalized, pred_infection_site),
-         fn = get_infection_site_fn(infection_site_normalized, pred_infection_site),
-         infection_site_in_abstract = infection_sites_in_abstract(title_abstract, infection_site))
+  # for now, focus on cases where we're confident all recorded sites are in
+  # abstract/title
+  filter(all_recorded_sites_in_text(infection_site, abstract)) %>%
+  mutate(tp_fp_fn = get_infection_tp_fp_fn(infection_site_normalized,
+                                           pred_infection_site))  %>%
+  separate(col= tp_fp_fn, into = c('tp', 'fp', 'fn'), sep = ',') %>%
+  mutate(tp = as.integer(tp),
+         fp = as.integer(fp),
+         fn = as.integer(fn))
 
 # 28% precision, 36% recall
+# NEW: 29.6% precision, 37.8% recall
 # 40% precision, 50% recall if exclude cases where tissues not in abstract
+# NEW: 54.7% precision, 70.9% recall
 infection_precision <-
   sum(microsp_infection_preds$tp) / (sum(microsp_infection_preds$tp) + sum(microsp_infection_preds$fp))
 
@@ -476,13 +404,13 @@ microsp_locality_preds <- read_csv('../../results/microsp_locality_predictions.c
                                       'Russia (Siberia)',
                                       locality_normalized),
          locality_normalized = ifelse(locality_normalized == 'Western Siberia (Novosibirsk)',
-                                      'Russia (Novosibirsk, Western Siberia)',
+                                      'Russia (Novosibirsk | Siberia)',
                                       locality_normalized),
          locality_normalized = ifelse(locality_normalized == '(pond (Tom River, Tomsk, Western Siberia)',
-                                      'Russia (Tom River, Tomsk, Western Siberia)',
+                                      'Russia (Tom River | Tomsk | Siberia)',
                                       locality_normalized),
          locality_normalized = ifelse(locality_normalized == '(pond (Krotovo Lake, Troitskoe, Novosibirsk, Western Siberia)',
-                                      'Russia (Krotovo Lake, Troitskoe, Novosibirsk region, Western Siberia)',
+                                      'Russia (Krotovo Lake | Troitskoe | Novosibirsk region | Siberia)',
                                       locality_normalized)) %>%
   rowwise() %>%
   mutate(tp = get_locality_tp(pred_locality, locality_normalized),
@@ -577,10 +505,12 @@ nucleus_preds <- read_csv('/home/boognish/Desktop/microsporidia_nlp/results/micr
          fn = as.integer(fn))
 
 # 74.5% precision, 40% recall if consider all data
-# 74.5% precision, 72.6% recall if only consider entries where nucleus data is
+# 74.5% precision, 66.4% recall if only consider entries where nucleus data is
 # in abstract
 nucleus_precision <-
   sum(nucleus_preds$tp) / (sum(nucleus_preds$tp) + sum(nucleus_preds$fp))
 
 nucleus_recall <-
   sum(nucleus_preds$tp) / (sum(nucleus_preds$tp) + sum(nucleus_preds$fn))
+
+# to_check <- filter(nucleus_preds, tp < 1 | fp > 0 | fn > 0)

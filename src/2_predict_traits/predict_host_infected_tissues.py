@@ -52,13 +52,13 @@ def main() -> None:
 
     # normalize recorded infection sites with umls names (if possible) and get
     # predicted infection sites
-    microsp_data[['infection_site_normalized', 'pred_infection_site']] = \
+    microsp_data[['infection_site_normalized', 'pred_infection_site', 'raw_predictions']] = \
         [predict_and_normalize_infection_sites(txt, sites_formatted) for \
             txt, sites_formatted in \
                 zip(microsp_data.abstract, microsp_data.infection_site_formatted)]
     
     microsp_data[['species', 'num_papers', 'paper_title', 'abstract', 'infection_site',
-                  'infection_site_formatted', 'infection_site_normalized',
+                  'infection_site_formatted', 'raw_predictions', 'infection_site_normalized',
                   'pred_infection_site']].to_csv(
                       Path('../../results/microsp_infection_site_predictions.csv')
                   )
@@ -458,7 +458,8 @@ def resolve_normalized_names(pred_sites: dict, recorded_sites: str) -> \
                 linker.kb.cui_to_entity[pred_sites[pred]['umls_entries'][0][0]].canonical_name
 
     return '; '.join([recorded_sites[site]['normalized_name'] for site in recorded_sites]), \
-        '; '.join([pred_sites[site]['normalized_name'] for site in pred_sites])
+        '; '.join([pred_sites[site]['normalized_name'] for site in pred_sites]), \
+            '; '.join([site for site in pred_sites])
 
 
 def predict_and_normalize_infection_sites(txt: str, recorded_infection_sites: str) \
