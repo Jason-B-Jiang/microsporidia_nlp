@@ -3,7 +3,7 @@
 # Predict microsporidia localities from paper titles + abstracts: V2
 #
 # Jason Jiang - Created: 2022/05/25
-#               Last edited: 2022/07/20
+#               Last edited: 2022/07/21
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -42,7 +42,61 @@ USERNAME = 'jiangjas'  # fill in your own geonames username here
 
 ################################################################################
 
+def main() -> None:
+    # Load in formatted dataframe of microsporidia species data, from
+    # src/1_format_data/3_misc_cleanup.R
+    microsp_data = pd.read_csv('../../data/manually_format_multi_species_papers.csv')
+
+    # Exclude species with >1 papers describing them (for now)
+    microsp_data = microsp_data[microsp_data['num_papers'] < 2]
+
+    # Make locality predictions using title_abstract column
+    microsp_data = microsp_data.assign(
+        # pred = predicted
+        pred_locality = lambda df: df['title_abstract'].map(
+            lambda txt: get_localities_string(predict_localities(txt))
+        )
+    )
+
+    microsp_data = microsp_data.assign(
+        locality_normalized = lambda df: df['locality'].map(
+            lambda locs: get_localities_string(
+                normalize_recorded_localities(locs)[1]
+                ), na_action='ignore'
+        )
+    )
+
+    microsp_data[['species', 'title_abstract', 'locality', 'locality_normalized',
+    'pred_locality']].to_csv(
+        Path('../../results/microsp_locality_predictions.csv')
+    )
+
+################################################################################
+
 ## Helper functions for predicting regions + subregions from texts
+
+def get_cached_geonames_results(loc: str):
+    """Retrieve cached geonames search results for some putative location, loc.
+    If loc isn't in cache, then get the geonames search results and store it in
+    the cache for later.
+
+    Input:
+        loc: string for some predicted location
+
+    Output:
+        instance of geonames search results class
+    """
+    if not loc in GEONAMES_CACHE:
+        # this particular location not looked up in geonames yet, get top 50
+        # search results (first page of results) and store in cache
+        geonames_result = geocoder.geonames(loc, key=USERNAME, maxRows=50)
+        GEONAMES_CACHE[loc] = geonames_result
+    else:
+        # fetch cached results
+        geonames_result = GEONAMES_CACHE[loc]
+
+    return geonames_result
+
 
 def remove_leading_determinant(span: spacy.tokens.span.Span) -> str:
     """Remove leading determinant from a spacy span for a location entity, and
@@ -53,13 +107,13 @@ def remove_leading_determinant(span: spacy.tokens.span.Span) -> str:
         span: spaCy span representing a location entity
     
     Return:
-        string of the spaCy span, with leading determinant removed
+        spaCy span with leading determinant removed
     """
     if span[0].pos_ == 'DET':
         # remove leading determinant and return resulting text
-        return span[1:].text
+        return span[1:]
     
-    return span.text
+    return span
 
 
 def get_spacy_preds(txt: str) -> List[spacy.tokens.span.Span]:
@@ -78,21 +132,19 @@ def get_spacy_preds(txt: str) -> List[spacy.tokens.span.Span]:
         [ent for ent in nlp(txt).ents if ent.label_ in SPACY_LOCALITIES]
 
     # keep only unique spaCy locality predictions
+    spacy_preds = [remove_leading_determinant(pred) for pred in spacy_preds]
     loc_names = []
+    unique_preds = []
     for pred in spacy_preds:
-        # remove leading determinant (ex: the Ocean of Weddel, remove 'the'),
-        # in case the location is mentioned both with and without the determinant
-        # in the text
-        if remove_leading_determinant(pred) in loc_names:
-            spacy_preds.remove(pred)
-        else:
-            loc_names.append(remove_leading_determinant(pred))
+        if pred.text not in loc_names:
+            loc_names.append(pred.text)
+            unique_preds.append(pred)
     
-    return spacy_preds
+    return unique_preds
 
 
-def get_top_region_hit(location: str, geonames_result):
-    """Top region hit from geonames search result is result with exact
+def get_top_location_hit(location: str, geonames_result):
+    """Top location hit from geonames search result is result with exact
     match to location in question, or the first search result if no
     exact name matches.
     """
@@ -114,7 +166,7 @@ def get_most_likely_region(location, geonames_result, geo_preds_regions) -> \
     If no geonames search results, return None
     """
     if not geonames_result:
-        return None
+        return None, None
 
     # likely regions are regions that have already been identified by flashgeotext
     # as countries in the text, and have also been identified by geonames as
@@ -125,10 +177,13 @@ def get_most_likely_region(location, geonames_result, geo_preds_regions) -> \
     #
     # country = country of origin for location, address = "canonical" name for
     # location from geonames
-    likely_regions = [(res.country, res.address, i) for res, i in \
-        enumerate(geonames_result) if res.country in geo_preds_regions].sort(key = lambda x: x[2])
+    likely_regions = sorted(
+        [(res.country, res.address, i) for i, res in enumerate(geonames_result) \
+            if res.country in geo_preds_regions],
+            key=lambda x: x[2]
+    )
 
-    top_region_hit = get_top_region_hit(location, geonames_result)
+    top_region_hit = get_top_location_hit(location, geonames_result)
 
     if not likely_regions:
         # countries detected by flashgeotext in text doesn't correspond to top
@@ -151,14 +206,7 @@ def set_as_region_or_subregion(loc: str, regions: dict) -> None:
     """
     region_names = list(regions.keys())
 
-    if not loc in GEONAMES_CACHE:
-        # this particular location not looked up in geonames yet, get top 50
-        # search results and store in cache
-        geonames_result = geocoder.geonames(loc, key=USERNAME, maxRows=50)
-        GEONAMES_CACHE[loc] = geonames_result
-    else:
-        # fetch cached results
-        geonames_result = GEONAMES_CACHE[loc]
+    geonames_result = get_cached_geonames_results(loc)
 
     most_likely_region, normalized_location_name = \
         get_most_likely_region(loc, geonames_result, region_names)
@@ -245,6 +293,19 @@ def remove_taxonomic_entities(spacy_preds: List[spacy.tokens.span.Span],
 
     for pred in preds_to_remove:
         spacy_preds.remove(pred)
+
+
+def get_localities_string(locs: dict) -> str:
+    """Return a string from some dictionary of predicted/normalized locations,
+    in the form of "region 1 (subregion 1 | subregion 2 | ...); region 2 ..."
+    """
+    loc_strs = []
+    for region in locs:
+        loc_strs.append(
+            f"{region} ({' | '.join(list(locs[region]['subregions'].keys()))})"
+            )
+    
+    return '; '.join(loc_strs)
 
 
 def predict_localities(txt: str) ->  Dict[str, dict]:
@@ -402,6 +463,43 @@ def geonames_normalize_recorded_localities(unnormalized_locs: Dict[str, List[str
                 unnormalized_locs[normalized_region]['subregions'].remove(subregion)
 
 
+def get_geonames_canonical_region(region: str) -> Optional[str]:
+    """Return the canonical country name for the geonames result with an exact
+    string match to region, or the top result otherwise.
+
+    Return None if no geonames search results for region.
+    """
+    results = get_cached_geonames_results(region)
+    if not results:
+        return  # no geonames results, return None
+
+    return get_top_location_hit(region, results)
+
+
+def get_geonames_canonical_subregion(subregion: str, normalized_region: str) -> \
+    Optional[str]:
+    """Get the canonical name for some subregion of interest, choosing the geonames
+    search result with normalized_region as its country, or the top result otherwise.
+
+    Input:
+        subregion: subregion recorded for some region
+
+        normalized_region: geonames/flashgeonames-normalized name for the region
+        to this subregion
+    """
+    results = get_cached_geonames_results
+    if not results:
+        return  # no geonames results, return None
+
+    # get results with country of origin as normalized_region
+    region_results = [res for res in results if res.country == normalized_region]
+
+    if not region_results:
+        return get_top_location_hit(subregion)
+    
+    return region_results[0]
+
+
 def normalize_recorded_localities(recorded_locs: str) -> str:
     """For a semi-colon separated list of regions and subregions recorded from a
     text, make the recorded location names consistent with predicted location names
@@ -433,36 +531,5 @@ def normalize_recorded_localities(recorded_locs: str) -> str:
 
 ################################################################################
 
-## Make locality predictions for each microsporidia species paper
-## TODO - move all this code to a main() function
-
-# Load in formatted dataframe of microsporidia species data, from
-# src/1_format_data/3_misc_cleanup.R
-microsp_data = pd.read_csv('../../data/manually_format_multi_species_papers.csv')
-
-# Exclude species with >1 papers describing them (for now)
-microsp_data = microsp_data[microsp_data['num_papers'] < 2]
-
-# Make locality predictions using title_abstract column
-microsp_data = microsp_data.assign(
-    # pred = predicted
-    pred_locality = lambda df: df['title_abstract'].map(
-        lambda txt: predict_localities(txt)[1]
-    )
-)
-
-microsp_data = microsp_data.assign(
-    locality_normalized = lambda df: df['locality'].map(
-        lambda locs: normalize_recorded_localities(locs)[1], na_action='ignore'
-    )
-)
-
-################################################################################
-
-## Write outputs
-## TODO - move all this code to a main() function
-
-# Write predictions to results folder
-microsp_data[['species', 'title_abstract', 'locality', 'locality_normalized', 'pred_locality']].to_csv(
-    Path('../../results/microsp_locality_predictions.csv')
-    )
+if __name__ == '__main__':
+    main()
