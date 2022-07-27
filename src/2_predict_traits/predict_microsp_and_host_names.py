@@ -3,7 +3,7 @@
 # Predict microsporidia species names + hosts from paper titles + abstracts
 #
 # Jason Jiang - Created: 2022/05/19
-#               Last edited: 2022/05/31
+#               Last edited: 2022/07/27
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -20,26 +20,139 @@ import spacy
 from spacy.matcher import PhraseMatcher
 from pathlib import Path
 from pygbif import species
+from typing import Tuple
+
+################################################################################
+
+## Initialize language models
+
+# Initialize Taxonerd species entity predictor
+taxonerd = TaxoNERD(model="en_ner_eco_biobert",  # use more accurate model
+                    prefer_gpu=False,
+                    with_abbrev=False)
+
+# Initialize spaCy medium pipeline
+nlp = spacy.load('en_core_web_md')
 
 ################################################################################
 
 ## Define regex patterns for detecting new species names
 
-SPECIES = r'[A-Z](\.|[a-z]+) [A-Z]?[a-z]+( [a-z]+)?'
+# all microsporidia genus names from NCBI
+MICROSP_GENUSES = pd.read_csv(
+    '../../data/microsp_genuses/microsporidia_genuses.tsv',
+        sep='\t')['name'].tolist()
 
-NEW_SPECIES_INDICATORS =\
-    [r'[Nn](ov|OV)?(\.|,)? ?[Gg](en|EN)?(\.|,)?(.*?)?[Nn](ov|OV)?(\.|,)? ?[Ss][Pp](\.|,)?',
-     r'[Gg](en|EN)?(\.|,)? ?[Nn](ov|OV)?(\.|,)?(.*?)?[Ss][Pp](\.|,)? ?[Nn](ov|OV)?(\.|,)?',
-     r'[Nn](ov|OV)?(\.|,)? ?[Ss][Pp](\.|,)?',
-     r'[Ss][Pp](\.|,)? ?[Nn](ov|OV)?(\.|,)?']
+# conventional ways of indicating new species/genuses
+NEW_SPECIES_INDICATORS = \
+    [r'( [Nn](ov|OV)?(\.|,) [Gg](en|EN)?(\.|,))? (and |et )?[Nn](ov|OV)?(\.|,) [Ss][Pp](\.|,)',
+    r'( [Gg](en|EN)?(\.|,) [Nn](ov|OV)?(\.|,))? (and |et )?[Ss][Pp](\.|,) [Nn](ov|OV)?(\.|,)']
 
 NEW_SPECIES_INDICATORS =  r'{}'.format('(' + '|'.join(NEW_SPECIES_INDICATORS) + ')')
  
-NEW_SPECIES = r'{}'.format(  # final regex pattern for new species in text
-    (f"{SPECIES},? {NEW_SPECIES_INDICATORS}|[A-Z][a-z]+ [Ss][Pp]\.?")
-)
+# final regex pattern for new microspridia species in text
+NEW_SPECIES = r'{}'.format(
+    f"(({'|'.join(MICROSP_GENUSES)}) [A-Z]?[a-z]+|{SPECIES}(?=,?{NEW_SPECIES_INDICATORS}))"
+    )
 
 ################################################################################
+
+## Cache for storing texts already processed by spaCy
+
+SPACY_CACHE = {}
+
+################################################################################
+
+def main() -> None:
+    # load in microsporidia phenotype data + associated texts
+    microsp_data = pd.read_csv(
+        '../../data/manually_format_multi_species_papers.csv'
+        )
+
+    # add in column for Microsporidia species, as flagged by entity ruler
+    # add in column for host species, which is any taxonomic entity detected by
+    # TaxoNERD and is not a Microsporidia species
+    microsp_data = microsp_data.assign(
+        pred_microsporidia = lambda x: x['title_abstract'].map(
+            lambda s: get_microsporidia_from_text(s),
+            na_action='ignore'
+        )
+    )
+
+    # write modified microsp_data dataframe to results folder
+    microsp_data[['title_abstract', 'species', 'pred_microsporidia',
+              'hosts_natural', 'hosts_experimental', 'pred_hosts']].to_csv(
+    Path('../../results/microsp_and_host_predictions.csv')
+    )
+
+################################################################################
+
+## Helper functions
+# TODO - vectorize as much of this code as possible
+
+def get_spacy_cached_text(txt: str) -> spacy.tokens.doc.Doc:
+    if txt not in SPACY_CACHE:
+        SPACY_CACHE[txt] = nlp(txt)
+    
+    return SPACY_CACHE[txt]
+
+
+def is_overlapping_span(s1: spacy.tokens.span.Span, s2: spacy.tokens.span.Span) \
+    -> bool:
+    pass
+
+
+def get_spans_from_predictions(pred_text: str) -> Tuple[spacy.tokens.span.Span]:
+    pass
+
+
+def get_microsporidia_from_text(txt: str) -> str:
+    """Extract possible microsporidia species mentions from a string, txt.
+    Return a semi-colon formatted string of microsporidia species and their spans
+    within the text (when tokenized by spaCy).
+    
+    Ex: Microsporidium sp. 1 (2, 5); Microsporidium sp. 2 (6, 9); ...
+    """
+    doc = get_spacy_cached_text(txt)
+    microsp_matches = []
+
+    for match in re.finditer(NEW_SPECIES, doc.text):
+        start, end = match.span()
+        span = doc.char_span(start, end)
+
+        if span is not None:
+            microsp_matches.append(f"{span.text} ({span.start},{span.end})")
+    
+    return '; '.join(microsp_matches)
+
+
+def get_hosts_from_text(txt: str, pred_microsp: str) -> str:
+    """Extract possible microsporidia host species mentions from a string, txt,
+    by retrieving TaxoNERD predicted taxons that don't overlap with any predicted
+    microsporidia species.
+    
+    Return a similar string as from get_microsporidia_from_text.
+    """
+    doc = get_spacy_cached_text(txt)
+    taxonerd_preds = taxonerd.find_in_text(txt)
+
+    # filter out rows where text in ('microsporidium', 'microsporidia') or where
+    # text is only one token long
+
+    # convert offsets to token indices to create spans
+    # turn host + microsporidia predictions into spans
+    # remove any host predictions that have overlapping spans with microsporidia
+    # return formatted string of remaining hosts and their span indices
+    
+
+################################################################################
+
+if __name__ == '__main__':
+    main()
+
+################################################################################
+
+## OLD FUNCTIONS, KEEPING FOR REFERENCE
 
 ## Function for extracting new species names from titles/abstracts
 
@@ -73,9 +186,6 @@ def get_new_microsp_species(txt: str) -> str:
 # src/1_format_data/3_misc_cleanup.R
 microsp_data = pd.read_csv('../../data/manually_format_multi_species_papers.csv')
 
-# Exclude species with >1 papers describing them (for now)
-microsp_data = microsp_data[microsp_data['num_papers'] < 2]
-
 # Predict microsporidia species names
 microsp_data = microsp_data.assign(
     pred_species = lambda df: df['title_abstract'].map(
@@ -93,10 +203,7 @@ microsp_data = microsp_data.assign(
 #       microsporidia species, if there's multiple microsporidia species in a
 #       paper.
 
-# Initialize Taxonerd species entity predictor
-taxonerd = TaxoNERD(model="en_ner_eco_biobert",  # use more accurate model
-                    prefer_gpu=False,
-                    with_abbrev=False)
+
 
 # Helper function for normalizing all predicted/recorded species names w/ GBIF,
 # so we can directly compare predicted and recorded species names
@@ -153,8 +260,6 @@ microsp_data['pred_hosts'] = \
 microsp_genuses = pd.read_csv('../../data/microsp_genuses/microsporidia_genuses.tsv',
                               sep='\t')['name'].tolist()
 
-nlp = spacy.load('en_core_web_md')
-
 genus_matcher = PhraseMatcher(nlp.vocab)
 genus_matcher.add('microsp_genus', [nlp(genus) for genus in microsp_genuses])
 
@@ -175,12 +280,3 @@ microsp_data = microsp_data.assign(
         lambda species: get_microsp_species(species), na_action='ignore'
     )
 )
-
-################################################################################
-
-## Write resulting dataframe of predictions to results folder
-
-microsp_data[['title_abstract', 'species', 'pred_species', 'pred_species_2',
-              'hosts_natural', 'hosts_experimental', 'pred_hosts']].to_csv(
-    Path('../../results/microsp_and_host_predictions.csv')
-    )
