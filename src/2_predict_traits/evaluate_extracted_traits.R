@@ -258,133 +258,63 @@ infection_recall <-
 
 ## Evaluate predicted localities
 
-get_region_subregions <- function(locality) {
-  locality <- str_split(locality, '; ')[[1]]
-  region_subregions <- list()
+get_regions_and_subregions_list <- function(locs) {
+  locs <- str_split(locs, '; ')[[1]]
+  regions <- sapply(locs, function(x) {str_split(x, ' ?\\(')[[1]][1]})
+  subregions <-
+    lapply(locs, function(x) {str_split(str_extract(x, '(?<=\\().+(?=\\))'), ' \\| ')[[1]]})
   
-  for (loc in locality) {
-    region <- str_extract(loc, '.+(?= \\()')[[1]]
-    subregions <- str_extract(loc, '(?<=\\().+?(?=\\))')
+  names(subregions) <- regions
+  
+  return(subregions)
+}
+
+
+get_true_hits <- function(pred, recorded) {
+  true_hits <- list()
+  # for (p in pred)
+  #   if p is a substring of anything in recorded, or if anything in recorded
+  #   is a substring of p, append c(pred, recorded) to some accumulated vector
+  #   and remove the match in recorded
+  for (p in pred) {
+    # predicted site is a substring of recorded site, or any recorded site is
+    # a substring of the predicted site
+    hits <- which(str_detect(recorded, p) | str_detect(p, recorded))
     
-    if (!is.na(subregions)) {
-      region_subregions[[region]] <- str_split(subregions, ' \\| ')[[1]]
-    } else {
-      region_subregions[[region]] <- character(0)
+    if (length(hits) > 0) {
+      for (h in hits) {
+        true_hits[[length(true_hits) + 1]] <- c(p, recorded[h])
+      }
+      
+      # remove matches so every recorded location may only match with one
+      # predicted location at most
+      recorded <- recorded[-hits]
     }
   }
   
-  return(region_subregions)
+  return(true_hits)
 }
 
 
-get_num_regions_and_subregions <- function(locality) {
-  if (is.na(locality)) {
-    return(0)
-  }
+get_loc_tp <- function(pred, recorded) {
+  pred <- get_regions_and_subregions_list(pred)
+  recorded <- get_regions_and_subregions_list(recorded)
   
-  locality <- get_region_subregions(locality)
+  # return list of vectors of matches
+  # (pred_match, recorded_match, ...)
+  intersecting_regions <- get_true_hits(names(pred), names(recorded))
   
-  # number of regions + number of all subregions
-  return(length(locality) + sum(unlist(lapply(locality, length))))
-}
-
-
-get_locality_tp <- function(pred, recorded) {
-  if (is.na(pred) | is.na(recorded)) {
-    return(0)
-  }
-  
-  pred <- get_region_subregions(pred)
-  recorded <- get_region_subregions(recorded)
-  
-  tp <- 0
-  for (region in names(recorded)) {
-    # true positive if recorded region among predicted regions
-    tp <- tp + (region %in% names(pred))
+  num_subregion_matches <- 0
+  for (region in intersecting_regions) {
+    intersecting_subregions <- get_true_hits(
+      pred[region[1]], recorded[region[2]]
+    )
     
-    for (subregion in recorded[[region]]) {
-      # true positive subregion if any of the predicted subregions for this
-      # region are a substring of the recorded subregion
-      if (!is.null(pred[[region]])) {
-        tp <- tp + any(str_detect(subregion, pred[[region]]))
-      }
-    }
+    num_subregion_matches <- num_subregion_matches + length(intersecting_subregions)
   }
   
-  return(tp)
+  return(length(intersecting_regions) + num_subregion_matches)
 }
-
-
-get_locality_fp <- function(pred, recorded) {
-  if (is.na(pred)) {
-    return(0)
-  } else if (is.na(recorded)) {
-    # if no recorded localities, then all predicted regions and subregions are
-    # false pos
-    return(get_num_regions_and_subregions(pred))
-  }
-  
-  pred <- get_region_subregions(pred)
-  recorded <- get_region_subregions(recorded)
-  
-  fp <- 0
-  for (region in names(pred)) {
-    if (!(region %in% names(recorded))) {
-      # predicted region was not a recorded region, so count as false pos
-      fp <- fp + 1
-      
-      # because predicted region is incorrect, all predicted subregions are
-      # also false pos
-      fp <- fp + length(pred[[region]])
-      
-    } else {
-      # check if predicted subregions are correct for this correctly predicted
-      # region
-      for (subregion in pred[[region]]) {
-        fp <- fp + !any(sapply(recorded[[region]],
-                               function(x) {str_detect(x, subregion)}))
-      }
-    }
-  }
-  
-  return(fp)
-}
-
-
-get_locality_fn <- function(pred, recorded) {
-  if (is.na(pred)) {
-    # if no predicted regions/subregions, then num false pos is all recorded
-    # regions and subregions
-    return(get_num_regions_and_subregions(recorded))
-  } else if (is.na(recorded)) {
-    return(0)
-  }
-  
-  pred <- get_region_subregions(pred)
-  recorded <- get_region_subregions(recorded)
-  
-  fn <- 0
-  for (region in names(recorded)) {
-    if (!(region %in% names(pred))) {
-      # region wasn't in predictions, so count as false negative
-      # all associated subregions are also false negatives
-      fn <- fn + 1
-      fn <- fn + length(recorded[[region]])
-      
-    } else {
-      for (subregion in recorded[[region]]) {
-        if (!(subregion %in% pred[[region]])) {
-          # none of the predicted subregions for this region are a substring
-          # of the recorded subregion, so count as false neg
-          fn <- fn + !any(str_detect(subregion, pred[[region]]))
-        }
-      }
-    }
-  }
-  
-  return(fn)
-}
-
 
 check_if_regions_in_abstract <- function(title_abstract, locality) {
   if (is.na(locality)) {

@@ -3,7 +3,7 @@
 # Predict microsporidia localities from paper titles + abstracts: V2
 #
 # Jason Jiang - Created: 2022/05/25
-#               Last edited: 2022/07/21
+#               Last edited: 2022/07/26
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -19,6 +19,7 @@ import re
 import copy
 from pathlib import Path
 from taxonerd import TaxoNERD
+from Levenshtein import distance as levenshtein_distance
 
 ################################################################################
 
@@ -80,6 +81,10 @@ def get_cached_geonames_results(loc: str):
     If loc isn't in cache, then get the geonames search results and store it in
     the cache for later.
 
+    Sort geonames results by string similarity to loc (measured by Levenshtein
+    distance), from highest to lowest similarity (lowest to highest string
+    distance).
+
     Input:
         loc: string for some predicted location
 
@@ -95,7 +100,8 @@ def get_cached_geonames_results(loc: str):
         # fetch cached results
         geonames_result = GEONAMES_CACHE[loc]
 
-    return geonames_result
+    return sorted(geonames_result,
+        key=lambda res: levenshtein_distance(loc, res.address))
 
 
 def remove_leading_determinant(span: spacy.tokens.span.Span) -> str:
@@ -143,20 +149,6 @@ def get_spacy_preds(txt: str) -> List[spacy.tokens.span.Span]:
     return unique_preds
 
 
-def get_top_location_hit(location: str, geonames_result):
-    """Top location hit from geonames search result is result with exact
-    match to location in question, or the first search result if no
-    exact name matches.
-    """
-    exact_matches = [res for res in geonames_result if \
-        res.address.lower() == location.lower()]
-
-    if exact_matches:
-        return exact_matches[0]
-    
-    return geonames_result[0]
-
-
 def get_most_likely_region(location, geonames_result, geo_preds_regions) -> \
     Optional[Tuple[str, str, bool]]:
     """Using the top 50 geonames results for a location and a list of countries
@@ -167,6 +159,15 @@ def get_most_likely_region(location, geonames_result, geo_preds_regions) -> \
     """
     if not geonames_result:
         return None, None
+
+    # preferably return geonames result with exact string match, if possible
+    if geonames_result[0].address == location:
+        if geonames_result[0].country is None:
+            # set country of origin to location itself, if location is not a
+            # subregion to some country according to geonames
+            return location, location
+        else:
+            return geonames_result[0].country, location
 
     # likely regions are regions that have already been identified by flashgeotext
     # as countries in the text, and have also been identified by geonames as
@@ -183,7 +184,7 @@ def get_most_likely_region(location, geonames_result, geo_preds_regions) -> \
             key=lambda x: x[2]
     )
 
-    top_region_hit = get_top_location_hit(location, geonames_result)
+    top_region_hit = geonames_result[0]
 
     if not likely_regions:
         # countries detected by flashgeotext in text doesn't correspond to top
@@ -327,8 +328,6 @@ def predict_localities(txt: str) ->  Dict[str, dict]:
 
     # return the predicted locations as a dictionary of regions and their
     # subregions (ex: region = Australia, subregions = [Melbourne, Sydney])
-    #
-    # TODO - write a function that converts this to a string
     return get_regions_and_subregions(spacy_preds)
 
 ################################################################################
@@ -496,7 +495,7 @@ def get_geonames_canonical_region(region: str) -> Optional[str]:
     if not results:
         return  # no geonames results, return None
 
-    return get_top_location_hit(region, results).address
+    return results[0].address
 
 
 def get_geonames_canonical_subregion(subregion: str, normalized_region: str) -> \
@@ -525,7 +524,7 @@ def get_geonames_canonical_subregion(subregion: str, normalized_region: str) -> 
     elif region_results:
         return region_results[0].address
     
-    return get_top_location_hit(subregion, results).address
+    return results[0].address
 
 
 def normalize_recorded_localities(recorded_locs: str) -> str:

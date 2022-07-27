@@ -3,7 +3,7 @@
 # Predict microsporidia sites of infection in hosts
 #
 # Jason Jiang - Created: 2022/06/02
-#               Last edited: 2022/07/20
+#               Last edited: 2022/07/26
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -41,8 +41,8 @@ def main() -> None:
     microsp_data = pd.read_csv('../../data/manually_format_multi_species_papers.csv')
 
     # Fill missing values in these columns with empty strings
-    microsp_data[['infection_site', 'hosts_natural', 'hosts_experimental', 'abstract']] = \
-        microsp_data[['infection_site', 'hosts_natural', 'hosts_experimental', 'abstract']].fillna('')
+    microsp_data[['infection_site', 'hosts_natural', 'hosts_experimental', 'abstract', 'title_abstract']] = \
+        microsp_data[['infection_site', 'hosts_natural', 'hosts_experimental', 'abstract', 'title_abstract']].fillna('')
 
     # clean recorded infection sites
     microsp_data['infection_site_formatted'] = microsp_data.apply(
@@ -56,10 +56,14 @@ def main() -> None:
         [predict_and_normalize_infection_sites(txt, sites_formatted) for \
             txt, sites_formatted in \
                 zip(microsp_data.abstract, microsp_data.infection_site_formatted)]
+   
+    microsp_data['sites_not_in_text'] = \
+        microsp_data.apply(lambda df: sites_not_in_text(df.infection_site_formatted,
+            df.title_abstract), axis = 1)
     
     microsp_data[['species', 'num_papers', 'paper_title', 'abstract', 'infection_site',
                   'infection_site_formatted', 'raw_predictions', 'infection_site_normalized',
-                  'pred_infection_site']].to_csv(
+                  'pred_infection_site', 'sites_not_in_text']].to_csv(
                       Path('../../results/microsp_infection_site_predictions.csv')
                   )
 
@@ -229,6 +233,19 @@ def clean_recorded_infection_sites(sites: str, hosts_natural: str,
     # return a single string containing all infection sites + subsites,
     # separated by semi-colon
     return '; '.join(sites_formatted)
+
+
+def sites_not_in_text(sites_formatted: str, text: str) -> str:
+    """Return semi-colon separated list of all recorded sites not found in the
+    text it was extracted from.
+    
+    Use the 'cleaned' strings for infection sites, where all irrelevant
+    parenthesized info has been stripped away.
+    """  
+    return '; '.join(
+        [site for site in sites_formatted.split('; ') if \
+            site.lower() not in text.lower()]
+    )
 
 ################################################################################
 
@@ -485,7 +502,19 @@ def predict_and_normalize_infection_sites(txt: str, recorded_infection_sites: st
                 'umls_entries': site._.kb_ents,
                 'normalized_name': None
             }
-
+    
+    # don't change umls name stuff betweeen observe and predicted, identify original
+    # text where sites were inferred from
+    #
+    # get verbatim text from abstracts, does verbatim text match extracted entity
+    #
+    # mention subjectivity in making dataset for harmonizing entries
+    # verbatim text may or may not be recorded
+    #
+    # allow mismatches b/c of this and just discuss in discusson
+    # or, manually pull out verbatim text (or algorithmically)
+    #
+    # 
     return resolve_normalized_names(pred_infection_sites, recorded_infection_sites)
 
 ################################################################################
