@@ -3,7 +3,7 @@
 # Predict microsporidia species names + hosts from paper titles + abstracts
 #
 # Jason Jiang - Created: 2022/05/19
-#               Last edited: 2022/07/28
+#               Last edited: 2022/07/29
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -13,14 +13,12 @@
 ## Imports
 
 import re
+from webbrowser import get
 import pandas as pd
-import taxonerd
 from taxonerd import TaxoNERD
 import spacy
-from spacy.matcher import PhraseMatcher
 from pathlib import Path
-from pygbif import species
-from typing import Tuple, List
+from typing import List, Tuple
 
 ################################################################################
 
@@ -52,7 +50,7 @@ NEW_SPECIES_INDICATORS = \
 
 NEW_SPECIES_INDICATORS =  r'{}'.format('(' + '|'.join(NEW_SPECIES_INDICATORS) + ')')
  
-# final regex pattern for microspridia species in text
+# final regex pattern for microsporidia species in text
 MICROSP_SPECIES = r'{}'.format(
     f"(({'|'.join(MICROSP_GENUSES)}) [A-Z]?[a-z]+|{SPECIES}(?=,?{NEW_SPECIES_INDICATORS}))"
     )
@@ -71,19 +69,17 @@ def main() -> None:
         '../../data/manually_format_multi_species_papers.csv'
         )
 
-    # add in column for Microsporidia species, as flagged by entity ruler
-    # add in column for host species, which is any taxonomic entity detected by
-    # TaxoNERD and is not a Microsporidia species
-    # microsp_data = microsp_data.assign(
-    #     pred_microsporidia = lambda x: x['title_abstract'].map(
-    #         lambda s: get_microsporidia_from_text(s),
-    #         na_action='ignore'
-    #     )
-    # )
+    microsp_data[['pred_microsporidia', 'pred_microsporidia_spans', 'pred_hosts',
+        'pred_hosts_spans']] = \
+            microsp_data.apply(
+                lambda x: get_microsporidia_and_hosts(x['title_abstract']),
+                axis=1,
+                result_type='expand')
 
     # write modified microsp_data dataframe to results folder
     microsp_data[['title_abstract', 'species', 'pred_microsporidia',
-              'hosts_natural', 'hosts_experimental', 'pred_hosts']].to_csv(
+                  'pred_microsporidia_spans', 'hosts_natural', 'hosts_experimental',
+                  'pred_hosts', 'pred_hosts_spans']].to_csv(
     Path('../../results/microsp_and_host_predictions.csv')
     )
 
@@ -126,10 +122,10 @@ def get_taxonerd_taxons(doc: spacy.tokens.doc.Doc) -> List[spacy.tokens.span.Spa
     # filter out any rows in pred_taxons with 'microsporidium' or 'microsporidia'
     pred_taxons = pred_taxons[~pred_taxons['text'].str.contains("microsp")]
 
+    # return list of spans for the predicted taxons, from the original doc
     return [doc.char_span(int(start), int(end)) for start, end in \
         [tuple(re.search('\d+ \d+', offset).group(0).split(' ')) \
             for offset in pred_taxons.offsets.tolist()]]
-
 
 
 def is_overlapping_span(s1: spacy.tokens.span.Span, s2: spacy.tokens.span.Span) \
@@ -143,20 +139,35 @@ def is_overlapping_span(s1: spacy.tokens.span.Span, s2: spacy.tokens.span.Span) 
     return False
 
 
-def format_predicted_microsp_and_hosts_str(microsp: List[spacy.tokens.span.Span],
-    hosts: List[spacy.tokens.span.Span]) -> str:
+def get_span_boundaries(spans: List[spacy.tokens.span.Span]) -> str:
+    """Returns a semicolon-separated string of the start and stop boundaries of
+    each span in a list of spans (wrt to their original document.)
+
+    Ex: [hi, there] -> '0,1; 1,2'
     """
-    """
-    pass
+    return '; '.join([f"{s.start},{s.end}" for s in spans])
 
 
-def get_microsporidia_and_hosts(txt: str) -> str:
-    """Extract possible microsporidia species mentions from a string, txt.
-    Return a semi-colon formatted string of microsporidia species and their spans
-    within the text (when tokenized by spaCy).
+def get_microsporidia_and_hosts(txt: str) -> Tuple[str]:
+    """Extract possible microsporidia + non-microsporidia species (putative
+    microsporidia hosts) mentions from a text.
+
+    Return a tuple of 4 strings:
+        1) semi-colon separated list of Microsporidia species
+        2) semi-colon separated list of span start + end for each predicted
+           microsporidia species
+        3) semi-colon separated list of non-Microsporidia species
+        4) semi-colon separated list of span start + end for each predicted
+           microsporidia species
+
+    Or, return a tuple of 4 empty strings if a nan value is passed in as txt.
     
-    Ex: Microsporidium sp. 1 (2, 5); Microsporidium sp. 2 (6, 9); ...
+    Ex: ('Microsporidium sp. 1; Microsporidium sp. 2', '0,3; 3,6',
+         'host 1; host 2', '0,2; 2,4')
     """
+    if isinstance(txt, float):
+        return ('', '', '', '')
+
     doc = get_spacy_cached_text(txt)
     microsporidia = get_microsporidia_from_doc(doc)
     pred_taxons = get_taxonerd_taxons(doc)
@@ -172,8 +183,10 @@ def get_microsporidia_and_hosts(txt: str) -> str:
     
     # keep non-unique values for now, as we can use that to make weakly labelled
     # host/microsporidia data.
-    return (microsporidia, hosts)
-    
+    return ('; '.join([m.text for m in microsporidia]),
+            get_span_boundaries(microsporidia),
+            '; '.join([h.text for h in hosts]),
+            get_span_boundaries(hosts))
 
 ################################################################################
 
@@ -186,15 +199,16 @@ if __name__ == '__main__':
 
 # Helper function for normalizing all predicted/recorded species names w/ GBIF,
 # so we can directly compare predicted and recorded species names
-def get_gbif_normalized_name(sp: str) -> str:
-    """Docstring goes here.
-    """
-    gbif_hit = species.name_backbone(sp)
-    if gbif_hit:
-        if gbif_hit['synonym']:
-            # get canonical name for this synonymized species name
-            return gbif_hit['canonicalName']  # TODO - use speciesKey
+#
+# def get_gbif_normalized_name(sp: str) -> str:
+#     """Docstring goes here.
+#     """
+#     gbif_hit = species.name_backbone(sp)
+#     if gbif_hit:
+#         if gbif_hit['synonym']:
+#             # get canonical name for this synonymized species name
+#             return gbif_hit['canonicalName']  # TODO - use speciesKey
         
-        return gbif_hit['canonicalName']
+#         return gbif_hit['canonicalName']
     
-    return sp  # no hits from GBIF search for species name, return as is
+#     return sp  # no hits from GBIF search for species name, return as is
