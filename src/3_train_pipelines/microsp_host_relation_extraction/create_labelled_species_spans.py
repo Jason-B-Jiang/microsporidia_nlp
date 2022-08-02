@@ -155,7 +155,7 @@ def is_overlapping_ent(ent_1: Tuple[int, int, str], ent_2: Tuple[int, int, str])
 def convert(data: Tuple[List[Tuple[str, Dict[str, List[Tuple[int, int, str]]]]]],
     output_path: Path) -> None:
     """Converts spaCy 2 training lists to spaCy 3 binary training data.
-    Taken from:
+    Inspired by:
     https://github.com/explosion/projects/blob/v3/pipelines/ner_demo/scripts/convert.py"""
     docs = []
     for entry in data:
