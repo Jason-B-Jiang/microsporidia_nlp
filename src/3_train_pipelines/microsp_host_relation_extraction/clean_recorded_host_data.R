@@ -3,7 +3,7 @@
 # Clean recorded microsporidia species + host names data
 #
 # Jason Jiang - Created: 2022/07/29
-#               Last edited: 2022/08/01
+#               Last edited: 2022/08/02
 #
 # Mideo Lab - Microsporidia text mining
 #
@@ -50,27 +50,19 @@ main <- function() {
                                                hosts_not_in_text_corrected),
                microsp_in_text = resolve_species(species_cleaned, microsp_not_in_text,
                                                  microsp_not_in_text_corrected)) %>%
-        rowwise() %>%
-        mutate(host_spans = get_spans_from_text(hosts_in_text, title_abstract),
-               microsp_spans = get_spans_from_text(microsp_in_text, title_abstract)) %>%
-        ungroup() %>%
         filter(num_papers == 1, !is.na(title_abstract),
                !is.na(hosts_in_text) | !is.na(microsp_in_text)) %>%
         select(species, title_abstract, species_cleaned, all_hosts, hosts_in_text,
-               microsp_in_text, host_spans, microsp_spans) %>%
+               microsp_in_text) %>%
         mutate(all_hosts = ifelse(is.na(all_hosts), '', all_hosts),
                hosts_in_text = ifelse(is.na(hosts_in_text), '', hosts_in_text),
-               microsp_in_text = ifelse(is.na(microsp_in_text), '', microsp_in_text),
-               host_spans = ifelse(is.na(host_spans), '', host_spans),
-               microsp_spans = ifelse(is.na(microsp_spans), '', microsp_spans)) %>%
+               microsp_in_text = ifelse(is.na(microsp_in_text), '', microsp_in_text)) %>%
         group_by(title_abstract) %>%
         mutate(species = str_c(species, collapse = ' || '),
                species_cleaned = str_c(species_cleaned, collapse = ' || '),
                all_hosts = str_c(all_hosts, collapse = ' || '),
                hosts_in_text = str_c(hosts_in_text, collapse = ' || '),
-               microsp_in_text = str_c(microsp_in_text, collapse = ' || '),
-               host_spans = str_c(host_spans, collapse = ' || '),
-               microsp_spans = str_c(microsp_spans, collapse = ' || ')) %>%
+               microsp_in_text = str_c(microsp_in_text, collapse = ' || ')) %>%
         distinct(.keep_all = T)
       
       write_csv(tmp, '../../../data/formatted_species_host_data.csv')
