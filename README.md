@@ -1,2 +1,1 @@
-# microsporidia_nlp
-Natural Language Processing for extracting Microsporidia species data
+THIS REPOSITORY HAS BEEN MOVED TO https://github.com/Jason-B-Jiang/microsporidia_text_mining
